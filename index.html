@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipeline Schedule Tutor</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Pipeline Schedule Tutor</h1>
+  <label class="ctl">level
+    <select id="levelsel"></select>
+  </label>
+  <label class="ctl">assist
+    <select id="assistsel">
+      <option value="none">validate only</option>
+      <option value="ready" selected>show ready set</option>
+      <option value="coach">coach (policy hints)</option>
+    </select>
+  </label>
+  <label class="ctl">colors
+    <select id="themesel"></select>
+  </label>
+  <span class="spacer"></span>
+  <button id="undo" title="Cmd/Ctrl+Z">↩ undo</button>
+  <button id="redo" title="Cmd/Ctrl+Shift+Z">↪ redo</button>
+  <button id="resetbtn">reset</button>
+  <button id="autostep" title="Space — one policy step on the selected rank">step ▸</button>
+  <button id="autorun" title="Run the policy until something strange happens (tie, bubble, phase change)">run until strange ▸▸</button>
+  <button id="projectbtn" class="primary" title="Project the rest of the schedule under the policy">project rest ⏭</button>
+  <button id="darktoggle" title="Toggle light/dark">◐</button>
+</header>
+
+<main>
+  <div>
+    <div class="panel">
+      <p class="blurb" id="blurb"></p>
+    </div>
+    <div class="panel" style="margin-top:14px">
+      <h2>Schedule</h2>
+      <div id="gridwrap"><div id="grid"></div></div>
+      <p class="hint">Click a rank to select it (<kbd>↑</kbd><kbd>↓</kbd>), hover an op to trace its
+      dependencies (red = needs, green = unblocks). <kbd>Space</kbd> = policy step,
+      <kbd>i</kbd> = idle. The blue line is each rank's frontier — you always place at it.</p>
+    </div>
+    <div class="panel" style="margin-top:14px">
+      <h2 id="pickerTitle">Place</h2>
+      <div id="picker"></div>
+      <div class="hint" id="hint"></div>
+    </div>
+  </div>
+  <div>
+    <div class="panel">
+      <h2>Scoreboard</h2>
+      <div id="stats"></div>
+    </div>
+    <div class="panel" style="margin-top:14px">
+      <h2>Log</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  The URL always encodes your current schedule — copy it to share a position or save your progress.
+  Notation: <b>F3</b> = forward of microbatch 3; with VPP, <b>F3·c1</b> = chunk 1.
+  Time model per level: uniform (F=B=1), honest (B=2F), or split (F/B/W for zero-bubble).
+</footer>
+
+<div id="toast"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
