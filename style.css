@@ -49,6 +49,8 @@ header {
   position: sticky; top: 0; z-index: 20;
 }
 header .spacer { flex: 1; }
+.btngroup { display: inline-flex; gap: 4px; padding: 0 8px; border-left: 1px solid var(--grid); }
+.btngroup:first-of-type { border-left: none; }
 label.ctl { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); font-size: 13px; }
 select, button, input[type="number"] {
   font: inherit; color: var(--ink);

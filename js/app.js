@@ -204,7 +204,11 @@ function afterChange(action, silent) {
         `internal ${pct(s.internalBubble)}, peak ${s.peak.join('/')}.`, 'event');
   } else {
     hideBanner();
-    autoAdvanceSelection();
+    // stay on the rank the user just acted on if it still has work;
+    // otherwise jump to the earliest-frontier rank
+    if (action?.rank !== undefined && E.pendingOps(sim, action.rank).length)
+      state.selectedRank = action.rank;
+    else autoAdvanceSelection();
   }
   saveHash();
   renderAll();
@@ -963,6 +967,9 @@ function renderChrome() {
   vis('loadsol', !!sol);
   if (sol) $('loadsol').title =
     `Load your best solution for this level (makespan ${sol.makespan})`;
+
+  $('playbtn').disabled = !state.sim.actions.length;
+  $('logPanel').style.display = $('log').childElementCount ? '' : 'none';
 }
 
 // --- banner / status -------------------------------------------------------------

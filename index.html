@@ -24,20 +24,28 @@
     <select id="themesel"></select>
   </label>
   <span class="spacer"></span>
-  <button id="undo" title="Cmd/Ctrl+Z">↩ undo</button>
-  <button id="redo" title="Cmd/Ctrl+Shift+Z">↪ redo</button>
-  <button id="resetbtn">reset</button>
-  <button id="loadsol" style="display:none">📂 my best</button>
-  <button id="editbtn" title="Free edit: move ops around, temporarily breaking invariants; commit when consistent again">✏️ edit</button>
-  <button id="editdone" class="primary" style="display:none">✓ finish editing</button>
-  <button id="editcancel" style="display:none">✕ cancel edit</button>
-  <button id="hintbtn" title="Highlight what the standard policy would do next (doesn't place it)">💡 hint</button>
-  <button id="autostep" title="Space — place one policy step on the selected rank">step ▸</button>
-  <button id="autorun" title="Run the policy until something strange happens (tie, bubble, phase change)">run until strange ▸▸</button>
-  <button id="projectbtn" class="primary" title="Finish the schedule with the standard policy (this is what par measures)">solve ⏭</button>
-  <button id="unlockall" title="Skip the progression and unlock every level and tool">🔓 unlock all</button>
-  <button id="playbtn" title="Animate the schedule: watch what each rank is doing as time advances">▶ play</button>
-  <button id="darktoggle" title="Toggle light/dark">◐</button>
+  <span class="btngroup">
+    <button id="undo" title="Cmd/Ctrl+Z">↩ undo</button>
+    <button id="redo" title="Cmd/Ctrl+Shift+Z">↪ redo</button>
+    <button id="resetbtn">reset</button>
+  </span>
+  <span class="btngroup">
+    <button id="loadsol" style="display:none">📂 my best</button>
+    <button id="editbtn" title="Free edit: move ops around, temporarily breaking invariants; commit when consistent again">✏️ edit</button>
+    <button id="editdone" class="primary" style="display:none">✓ finish editing</button>
+    <button id="editcancel" style="display:none">✕ cancel edit</button>
+  </span>
+  <span class="btngroup">
+    <button id="hintbtn" title="Highlight what the standard policy would do next (doesn't place it)">💡 hint</button>
+    <button id="autostep" title="Space — place one policy step on the selected rank">step ▸</button>
+    <button id="autorun" title="Run the policy until something strange happens (tie, bubble, phase change)">run until strange ▸▸</button>
+    <button id="projectbtn" class="primary" title="Finish the schedule with the standard policy (this is what par measures)">solve ⏭</button>
+  </span>
+  <span class="btngroup">
+    <button id="playbtn" title="Animate the schedule: watch what each rank is doing as time advances" disabled>▶ play</button>
+    <button id="unlockall" title="Skip the progression and unlock every level and tool">🔓 unlock all</button>
+    <button id="darktoggle" title="Toggle light/dark">◐</button>
+  </span>
   <span id="customwrap" style="display:none"></span>
 </header>
 <div id="cfgrow" class="cfgrow" style="display:none">
@@ -93,7 +101,7 @@
       <h2>Scoreboard</h2>
       <div id="stats"></div>
     </div>
-    <div class="panel" style="margin-top:14px">
+    <div class="panel" id="logPanel" style="margin-top:14px; display:none">
       <h2>Log</h2>
       <div id="log"></div>
     </div>
