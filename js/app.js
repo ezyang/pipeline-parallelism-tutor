@@ -706,16 +706,22 @@ function onEditDragMove(ev) {
   if (!editDrag) return;
   const delta = Math.round((ev.clientX - editDrag.startX) / CELL);
   if (delta === editDrag.lastDelta) return;
-  let next;
+  // pins: the dragged op (or its whole strand) at base position + delta
+  const pins = new Map();
+  const byId = state.sim.byId;
   if (editDrag.strand !== null) {
-    next = E.shiftMicrobatch(editDrag.origPlan, state.sim.byId, editDrag.strand, delta);
+    for (const [id, t] of editDrag.origPlan)
+      if (byId.get(id).mb === editDrag.strand) pins.set(id, t + delta);
   } else {
-    const t = editDrag.origPlan.get(editDrag.id) + delta;
-    if (t < 0) return;
-    next = new Map(editDrag.origPlan);
-    next.set(editDrag.id, t);
+    pins.set(editDrag.id, editDrag.origPlan.get(editDrag.id) + delta);
   }
-  if (!next) return;                     // would cross t=0
+  if ([...pins.values()].some(t => t < 0)) return;
+  // ripple physics: everything else gets pushed in the drag direction only,
+  // keeping relative structure; slack absorbs the push. delta=0 restores base.
+  const next = delta === 0
+    ? new Map(editDrag.origPlan)
+    : E.ripplePlan(state.level.cfg, byId, editDrag.origPlan, pins, Math.sign(delta));
+  if (!next) return;                     // ripple would cross t=0
   editDrag.lastDelta = delta;
   editDrag.moved = editDrag.moved || delta !== 0;
   state.plan = next;

@@ -353,3 +353,35 @@ test('stampNextMicrobatch: clean tile for 1F1B block, shoves for tight V block',
   assert.ok(E.isDone(vsim));
   assert.ok(vShoves > 0, 'tight V block should shove somewhere across strands');
 });
+
+test('ripplePlan: drag pushes downstream ops, preserves order, slack absorbs', () => {
+  const cfg = { P: 2, V: 1, M: 2, model: '11', cap: null };
+  const s = E.newState(cfg);
+  // tight schedule: r0: F0@0 F1@1 B0@4 B1@6 ; r1: F0@1 B0@2 F1@3(gap)... build simple:
+  const base = new Map([
+    ['F0_0', 0], ['F0_1', 1], ['B0_0', 4], ['B0_1', 6],
+    ['F1_0', 1], ['B1_0', 2], ['F1_1', 3], ['B1_1', 5],
+  ]);
+  assert.strictEqual(E.planViolations(cfg, base).length, 0);
+  // drag F1_0 (rank1 @1) right to 3: F1_1@3 must be pushed (same rank, order kept),
+  // B1_0 (dep of it? B1_0 needs F... B1_0 needs F1_0) pushed too.
+  const pins = new Map([['F1_0', 3]]);
+  const rippled = E.ripplePlan(cfg, s.byId, base, pins, +1);
+  assert.ok(rippled);
+  assert.strictEqual(rippled.get('F1_0'), 3);
+  assert.ok(rippled.get('B1_0') >= 4, 'B1_0 pushed past F1_0');
+  assert.ok(rippled.get('F1_1') >= rippled.get('B1_0') + 1, 'rank order preserved');
+  assert.strictEqual(E.planViolations(cfg, rippled).filter(v => v.code !== 'memory').length, 0);
+  // untouched upstream stays put
+  assert.strictEqual(rippled.get('F0_0'), 0);
+  // leftward drag: pull B0_1 from 6 to 5 — nothing else needs to move (slack)
+  const rip2 = E.ripplePlan(cfg, s.byId, base, new Map([['B0_1', 5]]), -1);
+  assert.ok(rip2);
+  assert.strictEqual(rip2.get('B0_1'), 5);
+  assert.strictEqual(rip2.get('F0_0'), 0);
+  // leftward drag that must pull deps: drag B0_0 (rank0@4, needs B1_0@2 end 3) to 2
+  // -> B1_0 must move to 1, F1_0 to 0 — but F1_0 needs F0_0 end 1 -> F1_0 can't go below 1 -> null? 
+  // B0_0@2 needs B1_0 end<=2 -> B1_0@1; B1_0 needs F1_0 end<=1 -> F1_0@0; F1_0 needs F0_0 end<=0 -> F0_0@-1 -> null
+  const rip3 = E.ripplePlan(cfg, s.byId, base, new Map([['B0_0', 2]]), -1);
+  assert.strictEqual(rip3, null);
+});

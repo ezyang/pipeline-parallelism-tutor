@@ -633,6 +633,74 @@ function planCompletionWindows(cfg, plan, probe) {
   return need;
 }
 
+// Push physics for dragging: given a base plan and pinned ops at new
+// positions, ripple everything else in the drag direction so structure is
+// preserved. Rules:
+//   - ops only ever move IN the drag direction (never re-pack into gaps),
+//   - each moves the minimum needed (slack absorbs the push),
+//   - relative order on each rank is preserved (a dragged op acts as a
+//     plunger, never jumps over neighbors),
+//   - dependency rods: dir=+1 pushes dependents right; dir=-1 pushes deps left.
+// Memory-cap violations are NOT auto-fixed (they stay visible). Returns the
+// rippled plan, or null if a leftward ripple would cross t=0.
+export function ripplePlan(cfg, byId, basePlan, pins, dir) {
+  const plan = new Map(basePlan);
+  for (const [id, t] of pins) plan.set(id, t);
+  const ids = [...plan.keys()];
+  const dur = id => byId.get(id).dur;
+  // same-rank neighbors in BASE order (order is what we preserve)
+  const byRank = new Map();
+  for (const id of ids) {
+    const r = byId.get(id).rank;
+    if (!byRank.has(r)) byRank.set(r, []);
+    byRank.get(r).push(id);
+  }
+  for (const arr of byRank.values())
+    arr.sort((a, b) => basePlan.get(a) - basePlan.get(b) || (byId.get(a).mb - byId.get(b).mb));
+  const prevOnRank = new Map(), nextOnRank = new Map();
+  for (const arr of byRank.values()) {
+    for (let i = 0; i < arr.length; i++) {
+      if (i > 0) prevOnRank.set(arr[i], arr[i - 1]);
+      if (i < arr.length - 1) nextOnRank.set(arr[i], arr[i + 1]);
+    }
+  }
+  const dependents = new Map();
+  for (const id of ids) {
+    for (const d of depsOf(cfg, byId.get(id))) {
+      if (!plan.has(d)) continue;
+      if (!dependents.has(d)) dependents.set(d, []);
+      dependents.get(d).push(id);
+    }
+  }
+  for (let guard = 0; guard < 20000; guard++) {
+    let changed = false;
+    for (const id of ids) {
+      if (pins.has(id)) continue;
+      let t = plan.get(id);
+      if (dir > 0) {
+        let floor = t;
+        const prev = prevOnRank.get(id);
+        if (prev !== undefined) floor = Math.max(floor, plan.get(prev) + dur(prev));
+        for (const d of depsOf(cfg, byId.get(id)))
+          if (plan.has(d)) floor = Math.max(floor, plan.get(d) + dur(d));
+        if (floor > t) { plan.set(id, floor); changed = true; }
+      } else {
+        let ceil = t;
+        const next = nextOnRank.get(id);
+        if (next !== undefined) ceil = Math.min(ceil, plan.get(next) - dur(id));
+        for (const dep of dependents.get(id) ?? [])
+          ceil = Math.min(ceil, plan.get(dep) - dur(id));
+        if (ceil < t) {
+          if (ceil < 0) return null;
+          plan.set(id, ceil); changed = true;
+        }
+      }
+    }
+    if (!changed) return plan;
+  }
+  return null;
+}
+
 // Shift every placed op of one microbatch by delta slots (plan-level; may
 // produce violations — that's the caller's problem to show).
 export function shiftMicrobatch(plan, byId, mb, delta) {
