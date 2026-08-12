@@ -108,8 +108,10 @@ balance it into ONE round of 4 (rounds = ⌊M/P⌋, size = ⌈M/rounds⌉), so t
 leftover microbatch rides inside a full wave instead of forming its own
 (makespan 22 — that's par). A round is a BAND of microbatches sweeping the
 pipe, wider than the pipe itself; the warmup quota grows with round size
-((P−r−1)·2 + (V−1)·G + 1). Wrap placement here, because rounds are a
-wrap-schedule concept.`,
+((P−r−1)·2 + (V−1)·G + 1). Wrap placement here because rounds are a
+wrap-schedule concept — and interestingly, at this size wrap-with-balanced-
+rounds (22) beats the V placement (24): try it in the sandbox (P=3, V=2,
+M=4, placement V) and see why the V's bounce can't hide a ragged tail.`,
   },
   {
     key: 'b-twice-f',

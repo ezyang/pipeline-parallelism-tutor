@@ -263,9 +263,18 @@ function computeFollowGhosts(sim) {
     const seed = deps.length === 0 && op.mb === 0;   // F0 of stage 0: the opening move
     if (!chainCont && !prevMb && !seed) continue;
     const site = earliestSite(sim, op);   // legality-checked, shoves right if needed
-    if (site) out.push({ id: op.id, rank: op.rank, ...site });
+    if (site) out.push({ id: op.id, rank: op.rank, mb: op.mb, ...site });
   }
-  return out;
+  // duel resolution: when several ghosts want the same (rank, t) cell, show
+  // only the lowest microbatch (what greedy would run); right-click the cell
+  // still offers everything via the full selector.
+  const byCell = new Map();
+  for (const g of out) {
+    const k = g.rank + ':' + g.t;
+    const cur = byCell.get(k);
+    if (!cur || g.mb < cur.mb) byCell.set(k, g);
+  }
+  return [...byCell.values()];
 }
 
 // Accept one ghost proposal (shared by click and the chase loop).
@@ -380,10 +389,30 @@ function afterChange(action, silent) {
   renderAll();
 }
 
+// Reset = one undoable step: clear the board but push the whole current
+// schedule onto the redo stack as a single batch.
+function resetSchedule() {
+  if (state.playTimer) stopPlayback(false);
+  if (state.editing) { exitEdit(false); return; }
+  const acts = state.sim.actions;
+  if (!acts.length) return;
+  state.redo = [acts.slice()];
+  state.batches = [];
+  state.sim = E.replay(state.level.cfg, []);
+  hideBanner();
+  setStatus('Board cleared — ↩ undo (or ↪ redo) brings the whole schedule back.');
+  state.selectedRank = 0;
+  saveHash(); renderAll();
+}
+
 function undo() {
   if (state.playTimer) stopPlayback(false);
   const acts = state.sim.actions;
-  if (!acts.length) return;
+  if (!acts.length) {
+    // nothing to un-place, but a reset may be waiting on the redo stack
+    if (state.redo.length) redo();
+    return;
+  }
   const n = state.batches.pop() ?? 1;
   state.redo.push(acts.slice(acts.length - n));
   state.sim = E.replay(state.level.cfg, acts.slice(0, acts.length - n));
@@ -1348,7 +1377,7 @@ function renderChrome() {
   $('editdone').style.display = 'none';
   $('editcancel').style.display = 'none';
   $('resetbtn').disabled = false;
-  $('undo').disabled = !state.sim.actions.length;
+  $('undo').disabled = !state.sim.actions.length && !state.redo.length;
   $('redo').disabled = !state.redo.length;
   const done = E.isDone(state.sim);
 
@@ -1705,7 +1734,7 @@ function init() {
   };
   $('undo').onclick = undo;
   $('redo').onclick = redo;
-  $('resetbtn').onclick = () => loadLevel(state.level);
+  $('resetbtn').onclick = resetSchedule;
   $('autostep').onclick = autoStep;
   $('autorun').onclick = autoRunUntilStrange;
   $('projectbtn').onclick = projectRest;
