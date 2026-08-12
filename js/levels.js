@@ -33,7 +33,7 @@ a decent schedule achieves.`,
   {
     key: 'memory-wall',
     name: '3. The memory wall',
-    cfg: { P: 4, V: 1, M: 6, model: '11', cap: 2 },
+    cfg: { P: 4, V: 1, M: 4, model: '11', cap: 2 },
     policy: '1f1b',
     goal: 'complete',
     blurb: `Bigger pipe, and a new rule: each rank can hold at most 2

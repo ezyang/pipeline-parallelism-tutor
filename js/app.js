@@ -209,9 +209,16 @@ function computeFollowGhosts(sim) {
     if (!deps.every(d => sim.placed.has(d))) continue;
     const chainCont = deps.length > 0;   // deps placed (checked above)
     const prevMb = op.mb > 0 && sim.placed.has(E.opId(op.kind, op.stage, op.mb - 1));
-    if (!chainCont && !prevMb) continue;
+    const seed = deps.length === 0 && op.mb === 0;   // F0 of stage 0: the opening move
+    if (!chainCont && !prevMb && !seed) continue;
     const site = earliestSite(sim, op);
-    if (site) out.push({ id: op.id, rank: op.rank, ...site });
+    if (!site) continue;
+    // never propose an illegal placement: check the hypothetical plan
+    // (catches memory-cap violations that dep-based earliestStart can't see)
+    const plan = new Map([...sim.placed.entries()].map(([id, p]) => [id, p.start]));
+    plan.set(op.id, site.t);
+    if (E.planViolations(sim.cfg, plan).length) continue;
+    out.push({ id: op.id, rank: op.rank, ...site });
   }
   return out;
 }
@@ -435,19 +442,33 @@ function renderGrid() {
       }
     }
     // follow ghosts: ready continuations (chain or next microbatch), clickable.
-    // Frontier sites pad idles up to the slot; idle-gap sites go via fillIdle.
+    // Single-click accepts the suggestion (frontier sites pad idles; idle-gap
+    // sites go via fillIdle). Double-click rejects it and opens the full
+    // selector for that slot instead.
     for (const g of followGhosts.filter(g => g.rank === r)) {
       const op = sim.byId.get(g.id);
       const el = renderItem({ id: g.id, start: g.t, dur: op.dur }, sim, true);
       el.classList.add('ghost', 'follow');
       el.title = `${E.label(op)} is ready — click to place it here (t=${g.t})` +
-        (g.mode === 'idle' ? ', filling the idle gap' : '');
+        (g.mode === 'idle' ? ', filling the idle gap' : '') +
+        `. Double-click to pick something else for this slot.`;
       el.style.cursor = 'pointer';
+      let clickTimer = null;
       el.onclick = ev => {
         ev.stopPropagation();
-        if (g.mode === 'idle') { fillIdle(r, g.t, g.id); return; }
-        const pad = Array.from({ length: g.t - sim.frontier[r] }, () => ({ rank: r, type: 'idle' }));
-        tryActions([...pad, { rank: r, type: 'op', id: g.id }]);
+        if (clickTimer) return;          // second click of a dblclick — ignore
+        clickTimer = setTimeout(() => {
+          clickTimer = null;
+          if (g.mode === 'idle') { fillIdle(r, g.t, g.id); return; }
+          const pad = Array.from({ length: g.t - sim.frontier[r] }, () => ({ rank: r, type: 'idle' }));
+          tryActions([...pad, { rank: r, type: 'op', id: g.id }]);
+        }, 230);
+      };
+      el.ondblclick = ev => {
+        ev.stopPropagation();
+        clearTimeout(clickTimer); clickTimer = null;
+        if (g.mode === 'idle') openIdlePopover(r, g.t, ev);
+        else openPopover(r, g.t, ev);
       };
       lane.appendChild(el);
     }
@@ -914,8 +935,9 @@ function closePopover() {
 }
 
 // Hint: pulse the coach's pick in the picker/popover without placing it.
+// The grid already shows every ready continuation as a ghost; hint's job is
+// to say WHICH of them the standard policy would take, and why it wins.
 function showHint() {
-  // hint about the earliest-frontier rank (same target as step ▸)
   let rank = -1, best = Infinity;
   for (let r = 0; r < state.sim.cfg.P; r++) {
     if (E.pendingOps(state.sim, r).length && state.sim.frontier[r] < best) {
@@ -930,12 +952,20 @@ function showHint() {
     return;
   }
   if (pick.action.type === 'idle') {
-    setStatus(`Hint: nothing is ready on rank ${rank} — place an idle (or click a later slot).`);
+    setStatus(`Hint: rank ${rank} has nothing ready — it must wait. Work another rank, or place an idle.`);
     return;
   }
   const op = state.sim.byId.get(pick.action.id);
-  setStatus(`Hint: run ${E.label(op)} on rank ${rank} (${E.POLICIES[state.level.policy].name}).`);
-  document.querySelectorAll(`.opbtn[data-opid="${CSS.escape(op.id)}"]`).forEach(el => {
+  const why = op.kind === 'B'
+    ? 'backwards run first — each one frees memory and unblocks the rank below'
+    : op.kind === 'W'
+    ? 'a weight-grad is pure filler — spend it where nothing else is ready'
+    : 'keep feeding forwards while the quota allows';
+  setStatus(`Hint: ${E.label(op)} on rank ${rank} — ${why}.`);
+  // pulse it wherever it's visible: its ghost on the grid, or its picker button
+  const targets = document.querySelectorAll(
+    `#grid .op.ghost.follow[data-opid="${CSS.escape(op.id)}"], .opbtn[data-opid="${CSS.escape(op.id)}"]`);
+  targets.forEach(el => {
     el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse');
   });
 }
