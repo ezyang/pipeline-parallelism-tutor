@@ -1046,6 +1046,36 @@ function renderChrome() {
 
   $('playbtn').disabled = !state.sim.actions.length;
   $('svgbtn').disabled = !state.sim.actions.length;
+
+  // ⧉ stamp: available when exactly one microbatch is fully scheduled
+  const soleMb = E.soleMicrobatch(state.sim);
+  const stampable = soleMb !== null && !E.isDone(state.sim);
+  $('stampbtn').style.display = stampable ? '' : 'none';
+  if (stampable) {
+    const bs = E.blockStats(state.sim, soleMb);
+    $('stampbtn').title =
+      `Repeat microbatch ${soleMb}'s trajectory for all ${state.sim.cfg.M} microbatches, ` +
+      `shifted ${bs.w} slots apart. Predicted peak memory per rank: ${bs.peak.join('/')}` +
+      (state.sim.cfg.cap != null ? ` (cap ${state.sim.cfg.cap})` : '') +
+      `. The block's lifespan on each rank determines its memory (Qi et al. 2024).`;
+  }
+}
+
+function stampCurrentBlock() {
+  const mb = E.soleMicrobatch(state.sim);
+  if (mb === null) return;
+  const bs = E.blockStats(state.sim, mb);
+  const res = E.stampBlock(state.sim, mb);
+  if (res.violations) {
+    setStatus(`⧉ This block doesn't tile: ${res.violations[0].msg}`, 'err');
+    return;
+  }
+  state.sim = E.replay(state.level.cfg, res.actions);
+  state.batches = res.actions.map(() => 1);
+  state.redo = [];
+  log(`Stamped microbatch ${mb}'s block across all ${state.sim.cfg.M} microbatches ` +
+      `(interval ${bs.w}, predicted peak ${bs.peak.join('/')}).`, 'event');
+  afterChange(null, true);
   $('logPanel').style.display = $('log').childElementCount ? '' : 'none';
 }
 
@@ -1264,6 +1294,7 @@ function init() {
   };
   $('cfgapply').onclick = () => loadLevel(customLevel(readCustomCfg()));
   $('hintbtn').onclick = showHint;
+  $('stampbtn').onclick = stampCurrentBlock;
   document.addEventListener('click', e => {
     if (!$('popover').contains(e.target) && !e.target.classList?.contains('slot'))
       closePopover();

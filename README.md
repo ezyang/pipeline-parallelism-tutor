@@ -37,15 +37,18 @@ the progression.
 
 1. **First steps** — P=2, M=1; the dependency rules and the idle move.
 2. **Pipelining (GPipe)** — P=2, M=4; overlap, bubbles, par.
-3. **The memory wall** — the activation cap forces you to re-invent 1F1B.
-4. **1F1B** — P=4, M=8; matches the Megatron paper figure (makespan 22,
-   bubble 3/11).
-5. **Backward costs 2×** — same schedule under the honest B=2F time model.
+3. **The memory wall** — cap=2 forces you to interleave backwards at all.
+4. **1F1B** — P=4, M=8; the *right* interleaving (Megatron figure, makespan
+   22, bubble 3/11).
+5. **The building block** — schedule ONE microbatch's trajectory, then ⧉
+   stamp it across all 8 (Qi et al. 2024, "controllable memory"): the
+   block's per-rank lifespan predicts peak memory before you commit.
 6. **Interleaved (VPP)** — P=4, V=2; each rank hosts two chunks.
-7. **Zero-bubble (F/B/W)** — split backward into input-grad B (critical path)
+7. **Backward costs 2×** — the honest B=2F time model; block interval w=3.
+8. **Zero-bubble (F/B/W)** — split backward into input-grad B (critical path)
    and weight-grad W (filler). ZB-H1 style.
-8. **ZB-H2** — double the warmup quota, spend memory, and aim for **0%
-   internal bubble** (the greedy reference achieves it too — match it).
+9. **ZB-H2** — double the warmup quota, spend memory, and aim for **0%
+   internal bubble**.
 
 Plus a **sandbox** (unlocked with level 4): set PP/VPP/microbatch count, time
 model, memory cap, and warmup depth freely.

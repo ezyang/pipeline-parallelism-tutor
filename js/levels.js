@@ -60,16 +60,19 @@ Suggested play: do warmup and a few steady-state rounds by hand until you
 feel the rhythm, then let ▸▸ grind and take over at the interesting bits.`,
   },
   {
-    key: 'b-twice-f',
-    name: '5. Backward costs 2×',
-    cfg: { P: 4, V: 1, M: 8, model: '12', cap: 4 },
+    key: 'building-block',
+    name: '5. The building block',
+    cfg: { P: 4, V: 1, M: 8, model: '11', cap: 4 },
     policy: '1f1b',
     goal: 'par',
-    blurb: `Same schedule, honest time model: backward takes two slots (it's
-roughly two matmuls to the forward's one). The steady-state rhythm is
-unchanged — 1F1B doesn't care about the ratio — but bubbles now cost more
-where backwards gate the critical path. Warmup getting tedious? You've
-earned "run until strange" and "project rest".`,
+    blurb: `A schedule is really ONE microbatch's trajectory — a "building
+block" — repeated every 2 slots (Qi et al. 2024). So don't place 64 ops:
+design the block. Schedule ONLY microbatch 0 (all its Fs and Bs, idling as
+needed), and a ⧉ stamp button appears with a prediction of the peak memory
+your block implies — its per-rank lifespan (first F to last B) divided by
+the repeat interval. Stamp it to replicate across all 8 microbatches. If
+your block was 1F1B-shaped you just rebuilt level 4 in a tenth of the
+clicks; if it was too eager, the stamp will name the constraint it breaks.`,
   },
   {
     key: 'interleaved',
@@ -78,14 +81,29 @@ earned "run until strange" and "project rest".`,
     policy: '1f1b',
     goal: 'par',
     blurb: `Each rank now hosts two chunks: rank 0 has stages 0 and 4, etc.
-A microbatch visits your rank twice on the way up and twice on the way down
-(F3·c1 = microbatch 3, chunk 1). Warmup admits more forwards, the bubble
-shrinks by ~V, and memory grows. This is the level where "run until
-something strange happens" earns its keep.`,
+A microbatch visits your rank twice up and twice down (the superscript is
+the stage). 128 ops — lean on your tools. Try block-stamping first: designing
+a block that tiles at all is a real puzzle here (each rank's ops must land on
+distinct time-residues mod w=4). But notice the best uniform stamp is SLOWER
+than par: Megatron's interleaved schedule moves microbatches in groups of P
+rather than at uniform offsets, which is exactly why it beats naive
+repetition. Stamp to get a legal baseline, then study the reference (⇵) to
+see the group trick — or run-until-strange and steer at the choice points.`,
+  },
+  {
+    key: 'b-twice-f',
+    name: '7. Backward costs 2×',
+    cfg: { P: 4, V: 1, M: 8, model: '12', cap: 4 },
+    policy: '1f1b',
+    goal: 'par',
+    blurb: `Honest time model: backward takes two slots (it's roughly two
+matmuls to the forward's one). The steady-state rhythm is unchanged — 1F1B
+doesn't care about the ratio — but the block repeat interval is now w=3,
+and bubbles cost more where backwards gate the critical path.`,
   },
   {
     key: 'zero-bubble',
-    name: '7. Zero-bubble (F/B/W)',
+    name: '8. Zero-bubble (F/B/W)',
     cfg: { P: 4, V: 1, M: 8, model: 'zb', cap: 4 },
     policy: 'zb',
     goal: 'par',
@@ -97,7 +115,7 @@ Same memory as 1F1B — W frees the activation, so delaying W costs memory.`,
   },
   {
     key: 'zb-h2',
-    name: '8. ZB-H2: buy zero with memory',
+    name: '9. ZB-H2: buy zero with memory',
     cfg: { P: 4, V: 1, M: 8, model: 'zb', cap: 8, warmup: 'zb2' },
     policy: 'zb',
     goal: 'internal0',

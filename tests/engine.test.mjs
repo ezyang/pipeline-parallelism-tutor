@@ -212,3 +212,48 @@ test('gaterOf: voluntary delay detected', () => {
   const g = E.gaterOf(s, 'F0_1');
   assert.strictEqual(g.kind, 'delayed');
 });
+
+test('building block: 1F1B block stamps to the full 1F1B schedule', () => {
+  const cfg = { P: 4, V: 1, M: 8, model: '11', cap: 4 };
+  // hand-build microbatch 0's 1F1B trajectory: F at t=r, B at t=2P-... :
+  // canonical 1F1B block: F_r at t=r, B on rank r at t = 2P-2-r + P... derive
+  // from the reference schedule instead.
+  const ref = E.referenceSchedule(cfg).state;
+  const s = E.newState(cfg);
+  // place ONLY microbatch 0's ops at their reference times, via idles
+  const acts = [];
+  for (let r = 0; r < cfg.P; r++) {
+    const items = ref.rows[r].filter(it => it.id && ref.byId.get(it.id).mb === 0);
+    let t = 0;
+    for (const it of items.sort((a, b) => a.start - b.start)) {
+      for (; t < it.start; t++) acts.push({ start: t, a: { rank: r, type: 'idle' } });
+      acts.push({ start: it.start, a: { rank: r, type: 'op', id: it.id } });
+      t = it.start + it.dur;
+    }
+  }
+  acts.sort((x, y) => x.start - y.start || x.a.rank - y.a.rank);
+  for (const { a } of acts) E.apply(s, a);
+  assert.strictEqual(E.soleMicrobatch(s), 0);
+  const bs = E.blockStats(s, 0);
+  assert.deepStrictEqual(bs.peak, [4, 3, 2, 1]);  // 1F1B's memory profile
+  const res = E.stampBlock(s, 0);
+  assert.ok(res.actions, JSON.stringify(res.violations));
+  const full = E.replay(cfg, res.actions);
+  assert.ok(E.isDone(full));
+  assert.strictEqual(E.score(full).makespan, 22);
+  assert.strictEqual(E.recognizeSchedule(full).name, '1F1B');
+});
+
+test('building block: too-eager block violates the cap when stamped', () => {
+  const cfg = { P: 2, V: 1, M: 4, model: '11', cap: 1 };
+  const s = E.newState(cfg);
+  // GPipe-style block: F0 t=0, B0 needs long lifespan on rank 0
+  E.apply(s, { rank: 0, type: 'op', id: 'F0_0' });
+  E.apply(s, { rank: 1, type: 'idle' });
+  E.apply(s, { rank: 1, type: 'op', id: 'F1_0' });
+  E.apply(s, { rank: 1, type: 'op', id: 'B1_0' });
+  E.apply(s, { rank: 0, type: 'idle' }); E.apply(s, { rank: 0, type: 'idle' });
+  E.apply(s, { rank: 0, type: 'op', id: 'B0_0' });  // lifespan 4 on rank 0
+  const res = E.stampBlock(s, 0);
+  assert.ok(res.violations?.some(v => v.msg.includes('memory') || v.code === 'memory'));
+});

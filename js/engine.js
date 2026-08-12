@@ -679,6 +679,87 @@ export function referenceSchedule(cfg) {
   return { state: s, done, deadlock, score: score(s) };
 }
 
+// --- Building blocks (Qi et al. 2024, "Controllable Memory") -------------------
+// A schedule can be described as ONE microbatch's trajectory (the building
+// block) repeated at a uniform interval w = the per-RANK work of one
+// microbatch: V chunks × (sum of op durations). A block tiles iff each rank's
+// ops occupy distinct time-residues mod w (the paper's "squeezing" condition).
+// The block's per-rank lifespan (first F start -> memory-releasing op end)
+// determines peak activation memory: ceil(lifespan / w) microbatches in flight.
+
+export function blockInterval(cfg) {
+  const dur = durations(cfg.model);
+  return cfg.V * opKinds(cfg.model).reduce((a, k) => a + dur[k], 0);
+}
+
+// Is the current state exactly "microbatch `mb` fully scheduled, nothing else"?
+export function soleMicrobatch(state) {
+  const placed = [...state.placed.keys()].map(id => state.byId.get(id));
+  if (!placed.length) return null;
+  const mb = placed[0].mb;
+  if (!placed.every(o => o.mb === mb)) return null;
+  const expected = state.ops.filter(o => o.mb === mb);
+  return placed.length === expected.length ? mb : null;
+}
+
+// Predict, from a complete single-microbatch block, what uniform repetition
+// yields per rank. The steady-state in-flight count at phase ρ is the block's
+// own in-flight profile summed at ρ, ρ+w, ρ+2w, … (each shifted copy is one
+// microbatch); the peak over phases is the schedule's peak memory, exact when
+// M is large enough to reach steady state (handles V>1, where each microbatch
+// holds one activation per chunk on a rank).
+export function blockStats(state, mb) {
+  const cfg = state.cfg;
+  const w = blockInterval(cfg);
+  const release = cfg.model === 'zb' ? 'W' : 'B';
+  const stats = [];
+  for (let r = 0; r < cfg.P; r++) {
+    const times = state.ops.filter(o => o.mb === mb && o.rank === r)
+      .map(o => ({ o, p: state.placed.get(o.id) }));
+    let firstF = Infinity, lastRelease = 0;
+    for (const { o, p } of times) {
+      if (o.kind === 'F') firstF = Math.min(firstF, p.start);
+      if (o.kind === release) lastRelease = Math.max(lastRelease, p.end);
+    }
+    const lifespan = Math.max(0, lastRelease - firstF);
+    // block in-flight profile on this rank
+    const profile = new Array(lastRelease + 1).fill(0);
+    for (const { o, p } of times) {
+      if (o.kind === 'F') for (let t = p.start; t <= lastRelease; t++) profile[t]++;
+      if (o.kind === release) for (let t = p.end; t <= lastRelease; t++) profile[t]--;
+    }
+    let peak = 0;
+    for (let rho = 0; rho < w; rho++) {
+      let sum = 0;
+      for (let t = rho; t < profile.length; t += w) sum += profile[t];
+      peak = Math.max(peak, sum);
+    }
+    stats.push({ rank: r, lifespan, peak: Math.min(peak, cfg.M * cfg.V) });
+  }
+  return { w, perRank: stats, peak: stats.map(s => s.peak) };
+}
+
+// Stamp the block: replicate every placed op for all other microbatches,
+// shifted by (mb' - mb) * w. Returns {actions} on success or {violations}.
+export function stampBlock(state, mb) {
+  const cfg = state.cfg;
+  const w = blockInterval(cfg);
+  const plan = new Map();
+  for (const [id, p] of state.placed) {
+    const op = state.byId.get(id);
+    for (let m = 0; m < cfg.M; m++) {
+      const shifted = p.start + (m - mb) * w;
+      if (shifted < 0) return { violations: [{ msg:
+        `${label(op)} starts too early — shifting microbatch ${m} by ${(m - mb) * w} ` +
+        `goes below t=0. Schedule microbatch 0 (not ${mb}) or start later.` }] };
+      plan.set(opId(op.kind, op.stage, m), shifted);
+    }
+  }
+  const violations = planViolations(cfg, plan);
+  if (violations.length) return { violations };
+  return { actions: planToActions(cfg, plan) };
+}
+
 // --- Post-mortem analysis -----------------------------------------------------
 // What actually gated each op: the dependency or same-rank predecessor whose
 // finish time equals the op's start. If nothing ends exactly at its start, the
