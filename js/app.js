@@ -485,18 +485,23 @@ function openIdlePopover(r, t, ev) {
   pop.innerHTML = '';
   const pending = E.pendingOps(sim, r);
   if (!pending.length) pop.innerHTML = '<span class="hint">Rank finished ✓</span>';
-  const group = document.createElement('div');
-  group.className = 'kindgroup';
-  for (const op of pending.sort((a, b) =>
-      (a.kind > b.kind ? 1 : a.kind < b.kind ? -1 : 0) || a.mb - b.mb || a.stage - b.stage)) {
-    const block = E.blockReason(sim, op, t);
-    const ready = !block || block.code === 'memory'; // memory depends on order; let replay judge
-    group.appendChild(opButton(op, {
-      notReady: state.assist !== 'none' && !ready,
-      onPick: o => { closePopover(); fillIdle(r, t, o.id); },
-    }));
+  // one row per kind, F → B → W (same order as everywhere else)
+  for (const kind of ['F', 'B', 'W']) {
+    const ops = pending.filter(o => o.kind === kind)
+      .sort((a, b) => a.mb - b.mb || a.stage - b.stage);
+    if (!ops.length) continue;
+    const group = document.createElement('div');
+    group.className = 'kindgroup';
+    for (const op of ops) {
+      const block = E.blockReason(sim, op, t);
+      const ready = !block || block.code === 'memory'; // memory depends on order; let replay judge
+      group.appendChild(opButton(op, {
+        notReady: state.assist !== 'none' && !ready,
+        onPick: o => { closePopover(); fillIdle(r, t, o.id); },
+      }));
+    }
+    pop.appendChild(group);
   }
-  pop.appendChild(group);
   placePopover(ev);
 }
 
