@@ -33,14 +33,15 @@ a decent schedule achieves.`,
   {
     key: 'memory-wall',
     name: '3. The memory wall',
-    cfg: { P: 4, V: 1, M: 8, model: '11', cap: 4 },
+    cfg: { P: 4, V: 1, M: 6, model: '11', cap: 2 },
     policy: '1f1b',
     goal: 'complete',
-    blurb: `Bigger pipe: 4 ranks, 8 microbatches. New rule: each rank can hold
-at most 4 microbatches of activations (the mem counter). Every forward
-holds memory until its backward releases it. Try forwards-first and you'll
-hit the wall — the cap forces a backward before more forwards. Whatever
-legal schedule you find, you're about to re-invent 1F1B.`,
+    blurb: `Bigger pipe, and a new rule: each rank can hold at most 2
+microbatches of activations (the mem counter). Every forward holds memory
+until its backward releases it. Try forwards-first, GPipe-style — you'll hit
+the wall after two forwards. The only way through is to interleave backwards
+between forwards. ANY complete schedule wins this level; don't worry about
+speed yet. (Watch the memory strips above each lane fill and drain.)`,
   },
   {
     key: '1f1b',
@@ -48,7 +49,8 @@ legal schedule you find, you're about to re-invent 1F1B.`,
     cfg: { P: 4, V: 1, M: 8, model: '11', cap: 4 },
     policy: '1f1b',
     goal: 'par',
-    blurb: `The classic. Warmup: rank r admits P−r forwards. Steady state:
+    blurb: `Level 3 forced you to interleave; this level asks for the RIGHT
+interleaving. The classic: warmup, rank r admits P−r forwards. Steady state:
 alternate one forward, one backward. Drain: finish the backwards. Par is
 makespan 22 with bubble 3/11 — exactly the Megatron paper figure. Don't let
 a microbatch's forward lag, or you'll pay for it as a bubble when its
