@@ -309,8 +309,8 @@ function renderGrid() {
     }
     lane.onclick = () => { closePopover(); state.selectedRank = r; renderAll(); };
     row.appendChild(lane);
-    grid.appendChild(row);
     grid.appendChild(renderMemStrip(sim, r, horizon));
+    grid.appendChild(row);
   }
 }
 

@@ -118,10 +118,11 @@ main > div { min-width: 0; }
 .stg-demo { font-size: 9px; vertical-align: super; }
 .rankrow .op { cursor: pointer; }
 
-/* memory-over-time strip under each lane */
-.memrow { display: flex; height: 14px; margin-bottom: 3px; }
-.memrow::before { content: ""; width: 130px; flex: none; }
-.memlane { position: relative; flex: none; border-bottom: 1px solid var(--grid); }
+/* memory-over-time strip above each lane; bars grow down toward the lane */
+.memrow { display: flex; height: 15px; margin-top: 3px; }
+.memrow::before { content: "mem"; width: 130px; flex: none; font-size: 8px;
+  color: var(--muted); text-align: right; padding-right: 8px; align-self: end; }
+.memlane { position: relative; flex: none; }
 .membar {
   position: absolute; bottom: 0; width: 32px;
   background: color-mix(in srgb, var(--accent) 45%, transparent);
