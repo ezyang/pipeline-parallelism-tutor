@@ -404,7 +404,7 @@ function clearTrace() {
 // Build op buttons for a rank into `box`. Used by both the picker panel and
 // the click-a-slot popover. `at` targets a slot at/after the frontier;
 // clicking an op auto-pads the gap with idles (committed atomically).
-function buildOpButtons(box, r, at = null) {
+function buildOpButtons(box, r, at = null, compact = false) {
   const sim = state.sim;
   const f = sim.frontier[r];
   const t = at ?? f;
@@ -419,14 +419,16 @@ function buildOpButtons(box, r, at = null) {
   for (const kind of kinds) {
     const group = document.createElement('div');
     group.className = 'kindgroup';
-    const lbl = document.createElement('span');
-    lbl.className = 'kindlabel';
-    lbl.textContent = {
-      F: 'forward',
-      B: sim.cfg.model === 'zb' ? 'backward (input grad)' : 'backward',
-      W: 'weight grad',
-    }[kind];
-    group.appendChild(lbl);
+    if (!compact) {
+      const lbl = document.createElement('span');
+      lbl.className = 'kindlabel';
+      lbl.textContent = {
+        F: 'forward',
+        B: sim.cfg.model === 'zb' ? 'backward (input grad)' : 'backward',
+        W: 'weight grad',
+      }[kind];
+      group.appendChild(lbl);
+    }
     for (const op of pending.filter(o => o.kind === kind)
                             .sort((a, b) => a.mb - b.mb || a.stage - b.stage)) {
       const ready = !E.blockReason(sim, op, t);
@@ -491,7 +493,7 @@ function openPopover(r, t, ev) {
   state.selectedRank = r;
   renderAll();
   const pop = $('popover');
-  buildOpButtons(pop, r, t);
+  buildOpButtons(pop, r, t, true);   // compact: no kind labels, ops are self-labeled
   pop.style.display = '';
   // fixed positioning near the mouse pointer, clamped to the viewport
   const pw = pop.offsetWidth, ph = pop.offsetHeight;
@@ -531,7 +533,8 @@ function previewConsequence(op, ready, r = state.selectedRank, t = null) {
     if (block.dep) highlightDep(block.dep);
     return;
   }
-  if (state.assist === 'none') return;
+  // ghost projection is a coach-level assist — with lighter help it's cheating
+  if (state.assist !== 'coach' || !featureOn('assist')) return;
   const pad = Array.from({ length: at - sim.frontier[r] }, () => ({ rank: r, type: 'idle' }));
   try {
     const base = E.replay(sim.cfg, sim.actions);
