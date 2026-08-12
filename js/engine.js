@@ -11,11 +11,18 @@
 export function durations(model) {
   if (model === '12') return { F: 1, B: 2 };
   if (model === 'zb') return { F: 1, B: 1, W: 1 };
+  if (model === 'zb12') return { F: 1, B: 2, W: 1 }; // honest ratios: B≈2F
   return { F: 1, B: 1 };
 }
 
+// Split-gradient models: backward is split into B (input grad) and W (weight
+// grad); W is what releases the activation memory.
+export function splitGrad(model) {
+  return model === 'zb' || model === 'zb12';
+}
+
 export function opKinds(model) {
-  return model === 'zb' ? ['F', 'B', 'W'] : ['F', 'B'];
+  return splitGrad(model) ? ['F', 'B', 'W'] : ['F', 'B'];
 }
 
 export function numStages(cfg) {
@@ -189,7 +196,7 @@ export function apply(state, action) {
       state.fbDepth[r]--;
       // In the split model the weight grad still needs the activation, so
       // memory is freed by W, not B.
-      if (state.cfg.model !== 'zb') state.inflight[r]--;
+      if (!splitGrad(state.cfg.model)) state.inflight[r]--;
       if (state.firstB[r] === null) state.firstB[r] = t;
     } else if (op.kind === 'W') {
       state.inflight[r]--;
@@ -427,7 +434,7 @@ export function planViolations(cfg, plan) {
   }
   // memory cap: walk each rank's timeline in order, F +1 / (B or W) release
   if (cfg.cap != null && !out.some(v => v.code === 'overlap')) {
-    const release = cfg.model === 'zb' ? 'W' : 'B';
+    const release = splitGrad(cfg.model) ? 'W' : 'B';
     for (let r = 0; r < cfg.P; r++) {
       let held = 0;
       const items = [...plan.entries()]
@@ -780,7 +787,7 @@ export function score(state) {
 
 // Reference schedule for a config: projection under its natural policy.
 export function referencePolicy(cfg) {
-  if (cfg.model === 'zb') return 'zb';
+  if (splitGrad(cfg.model)) return 'zb';
   return cfg.cap == null ? 'gpipe' : '1f1b';
 }
 
@@ -822,7 +829,7 @@ export function soleMicrobatch(state) {
 export function blockStats(state, mb) {
   const cfg = state.cfg;
   const w = blockInterval(cfg);
-  const release = cfg.model === 'zb' ? 'W' : 'B';
+  const release = splitGrad(cfg.model) ? 'W' : 'B';
   const stats = [];
   for (let r = 0; r < cfg.P; r++) {
     const times = state.ops.filter(o => o.mb === mb && o.rank === r)
@@ -1061,7 +1068,7 @@ export function recognizeSchedule(state) {
   if (!isDone(state)) return null;
   const cfg = state.cfg;
   const candidates = [];
-  const zb = cfg.model === 'zb';
+  const zb = splitGrad(cfg.model);
   const push = (name, note, policy, cfg2, paper) => {
     try {
       const s = newState(cfg2 ?? cfg);

@@ -154,7 +154,10 @@ and bubbles cost more where backwards gate the critical path.`,
 path — the next rank is waiting for it) and W computes the weight gradient
 (nobody is waiting — it can run whenever). Use W ops as filler to soak up
 what would otherwise be bubbles, ZB-H1 style. Priority: B, then F, then W.
-Same memory as 1F1B — W frees the activation, so delaying W costs memory.`,
+Same memory as 1F1B — W frees the activation, so delaying W costs memory.
+(Everything here is unit-time for clarity; the papers' figures use B≈2F.
+Try "split F/B/W, B=2F" in the sandbox for the honest version — the W-tetris
+gets much more interesting when the pieces have different sizes.)`,
   },
   {
     key: 'zb-h2',

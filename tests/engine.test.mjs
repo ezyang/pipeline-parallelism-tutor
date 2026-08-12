@@ -396,3 +396,17 @@ test('roundSize balances ragged microbatch counts; policy uses it', () => {
   assert.ok(r.done);
   assert.ok(r.score.makespan <= 53, `balanced rounds should reach 53, got ${r.score.makespan}`);
 });
+
+test('zb12 model: B=2F with split grads; schedules complete', () => {
+  const cfg = { P: 4, V: 1, M: 8, model: 'zb12', cap: 4 };
+  assert.deepStrictEqual(E.durations('zb12'), { F: 1, B: 2, W: 1 });
+  assert.ok(E.splitGrad('zb12'));
+  assert.strictEqual(E.blockInterval(cfg), 4);   // F+B+W = 1+2+1
+  const r = E.referenceSchedule(cfg);
+  assert.ok(r.done);
+  // W still releases memory: peak bounded by cap
+  assert.ok(Math.max(...r.score.peak) <= 4);
+  // ZB-H2-style warmup also completes under B=2F
+  const r2 = E.referenceSchedule({ ...cfg, cap: 8, warmup: 'zb2' });
+  assert.ok(r2.done);
+});

@@ -295,7 +295,7 @@ function acceptGhost(g) {
   let nudgeMb = null;
   if (!chasing) {
     const op = sim.byId.get(g.id);
-    const skipW = sim.cfg.model === 'zb';
+    const skipW = E.splitGrad(sim.cfg.model);
     const auto = computeFollowGhosts(sim)
       .filter(x => sim.byId.get(x.id).mb === op.mb)
       .filter(x => !(skipW && sim.byId.get(x.id).kind === 'W'))
@@ -323,7 +323,7 @@ function maybeNudge(mb) {
 // In the split-grad model, W ops are skipped: W is deliberate filler — WHERE
 // to spend it is the whole zero-bubble puzzle, so the chase leaves it to you.
 function chaseMicrobatch(mb) {
-  const skipW = state.sim.cfg.model === 'zb';
+  const skipW = E.splitGrad(state.sim.cfg.model);
   let placed = 0;
   chasing = true;
   for (let guard = 0; guard < 512; guard++) {
@@ -650,7 +650,7 @@ function renderMemStrip(sim, r, horizon) {
     if (!it.id) continue;
     const op = sim.byId.get(it.id);
     if (op.kind === 'F') delta[it.start + it.dur - 1]++;
-    else if (cfg.model === 'zb' ? op.kind === 'W' : op.kind === 'B')
+    else if (E.splitGrad(cfg.model) ? op.kind === 'W' : op.kind === 'B')
       delta[it.start + it.dur - 1]--;
   }
   const cap = cfg.cap ?? cfg.M * cfg.V;
@@ -1175,7 +1175,7 @@ function buildOpButtons(box, r, at = null, compact = false) {
       lbl.className = 'kindlabel';
       lbl.textContent = {
         F: 'forward',
-        B: sim.cfg.model === 'zb' ? 'backward (input grad)' : 'backward',
+        B: E.splitGrad(sim.cfg.model) ? 'backward (input grad)' : 'backward',
         W: 'weight grad',
       }[kind];
       group.appendChild(lbl);
