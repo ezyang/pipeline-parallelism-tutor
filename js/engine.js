@@ -358,6 +358,88 @@ export function policyPick(state, rank, policyKey) {
   return null;
 }
 
+// --- Free-form plans -----------------------------------------------------------
+// A plan is a Map(id -> start) of op placements with NO validity guarantee —
+// used by the UI's free-edit mode. These helpers judge and canonicalize it.
+
+// All constraint violations in a plan. Codes: overlap, dep-missing, dep-late,
+// memory (only if cap set; checked by simulating completed prefix order).
+export function planViolations(cfg, plan) {
+  const state = newState(cfg);
+  const out = [];
+  // overlaps per rank
+  for (let r = 0; r < cfg.P; r++) {
+    const items = [...plan.entries()]
+      .map(([id, start]) => ({ op: state.byId.get(id), start }))
+      .filter(x => x.op.rank === r)
+      .sort((a, b) => a.start - b.start);
+    for (let i = 1; i < items.length; i++) {
+      if (items[i].start < items[i - 1].start + items[i - 1].op.dur)
+        out.push({ id: items[i].op.id, code: 'overlap',
+          msg: `${label(items[i].op)} overlaps ${label(items[i - 1].op)} on rank ${r}` });
+    }
+  }
+  // dependencies
+  for (const [id, start] of plan) {
+    const op = state.byId.get(id);
+    for (const depId of depsOf(cfg, op)) {
+      const dep = state.byId.get(depId);
+      if (!plan.has(depId)) {
+        out.push({ id, code: 'dep-missing', dep: depId,
+          msg: `${label(op)} needs ${label(dep)} (rank ${dep.rank}), which isn't placed` });
+      } else if (plan.get(depId) + dep.dur > start) {
+        out.push({ id, code: 'dep-late', dep: depId,
+          msg: `${label(op)} at t=${start} needs ${label(dep)}, which finishes at t=${plan.get(depId) + dep.dur}` });
+      }
+    }
+  }
+  // memory cap: walk each rank's timeline in order, F +1 / (B or W) release
+  if (cfg.cap != null && !out.some(v => v.code === 'overlap')) {
+    const release = cfg.model === 'zb' ? 'W' : 'B';
+    for (let r = 0; r < cfg.P; r++) {
+      let held = 0;
+      const items = [...plan.entries()]
+        .map(([id, start]) => ({ op: state.byId.get(id), start }))
+        .filter(x => x.op.rank === r)
+        .sort((a, b) => a.start - b.start);
+      for (const { op, start } of items) {
+        if (op.kind === 'F') {
+          held++;
+          if (held > cfg.cap) out.push({ id: op.id, code: 'memory',
+            msg: `${label(op)} at t=${start} exceeds the memory cap (${held} > ${cfg.cap} in flight)` });
+        } else if (op.kind === release) held--;
+      }
+    }
+  }
+  return out;
+}
+
+// Canonicalize a valid, complete-or-partial plan back to an action list
+// (per-rank time order, gaps filled with idles). Throws on overlap.
+export function planToActions(cfg, plan) {
+  const state = newState(cfg);
+  const perRank = Array.from({ length: cfg.P }, () => []);
+  for (const [id, start] of plan) {
+    const op = state.byId.get(id);
+    perRank[op.rank].push({ op, start });
+  }
+  const events = [];
+  for (let r = 0; r < cfg.P; r++) {
+    perRank[r].sort((a, b) => a.start - b.start);
+    let t = 0;
+    for (const { op, start } of perRank[r]) {
+      if (start < t) throw new Error(`overlap on rank ${r} at t=${start}`);
+      for (; t < start; t++) events.push({ start: t, a: { rank: r, type: 'idle' } });
+      events.push({ start, a: { rank: r, type: 'op', id: op.id } });
+      t = start + op.dur;
+    }
+  }
+  // cross-rank replay order: by start time (deps always start strictly earlier
+  // than dependents in a violation-free plan)
+  events.sort((x, y) => x.start - y.start || x.a.rank - y.a.rank);
+  return events.map(e => e.a);
+}
+
 // --- Scoring ------------------------------------------------------------------
 export function score(state) {
   let makespan = 0, work = 0;

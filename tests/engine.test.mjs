@@ -103,3 +103,36 @@ test('replay reproduces state (undo support)', () => {
   const s3 = E.replay(cfg, s.actions);
   assert.deepStrictEqual(E.score(s3), E.score(s));
 });
+
+test('planViolations: catches overlap, dep-late, dep-missing, memory', () => {
+  const cfg = { P: 2, V: 1, M: 2, model: '11', cap: 1 };
+  const plan = new Map([
+    ['F0_0', 0], ['F0_1', 0],          // overlap on rank 0
+    ['F1_0', 0],                        // dep-late: needs F0_0 to end (t=1)
+    ['B1_0', 2],                        // ok given F1_0 hypothetically
+    ['B0_0', 5],                        // dep ok (B1_0 ends 3)
+  ]);
+  const v = E.planViolations(cfg, plan);
+  const codes = v.map(x => x.code).sort();
+  assert.ok(codes.includes('overlap'));
+  assert.ok(codes.includes('dep-late'));
+  // overlap suppresses the memory check; fix overlap and check memory
+  const plan2 = new Map([['F0_0', 0], ['F0_1', 1], ['F1_0', 1], ['B1_0', 2], ['B0_0', 3]]);
+  const v2 = E.planViolations(cfg, plan2);
+  assert.ok(v2.some(x => x.code === 'memory'));
+  // dep-missing: backward placed but its upstream backward isn't
+  const plan3 = new Map([['F0_0', 0], ['F1_0', 1], ['B0_0', 3]]);
+  const v3 = E.planViolations(cfg, plan3);
+  assert.ok(v3.some(x => x.code === 'dep-missing' && x.dep === 'B1_0'));
+});
+
+test('planToActions round-trips a valid complete schedule', () => {
+  const cfg = { P: 2, V: 1, M: 4, model: '11', cap: 2 };
+  const ref = E.referenceSchedule(cfg);
+  const plan = new Map([...ref.state.placed.entries()].map(([id, p]) => [id, p.start]));
+  assert.strictEqual(E.planViolations(cfg, plan).length, 0);
+  const actions = E.planToActions(cfg, plan);
+  const sim = E.replay(cfg, actions);
+  assert.ok(E.isDone(sim));
+  assert.deepStrictEqual(E.score(sim).makespan, ref.score.makespan);
+});

@@ -147,6 +147,20 @@ main > div { min-width: 0; }
 .slot.future { opacity: 0; border-style: dotted; }
 .slot.future:hover { opacity: 0.8; }
 .slot.future:hover::after { content: "+"; }
+.op.idle { cursor: pointer; }
+.op.idle:hover { border-color: var(--accent); opacity: 1; }
+
+/* free-edit mode */
+.op.violation { outline: 2.5px solid var(--bad); outline-offset: 1px; z-index: 7; }
+.op.lifted { opacity: 0.45; border-style: dashed; box-shadow: 0 0 0 3px var(--accent); }
+.slot.dropcell { opacity: 0.15; border-style: dotted; z-index: 2; }
+.slot.dropcell:hover { opacity: 0.9; background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.edittray {
+  margin: 10px 0 6px 130px; padding: 8px; border: 1px dashed var(--axis);
+  border-radius: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+}
+.violations { margin: 6px 0 0 130px; font-size: 12.5px; color: var(--bad); }
+.violations .beat { color: var(--good); }
 .popover {
   position: fixed; z-index: 30; min-width: 230px; max-width: 460px;
   background: var(--surface); border: 1px solid var(--axis); border-radius: 10px;

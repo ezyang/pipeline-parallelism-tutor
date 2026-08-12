@@ -43,6 +43,9 @@ const state = {
   mode: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
   redo: [],                // stack of action batches
   batches: [],             // size of each applied batch (for batch undo)
+  editing: false,          // free-edit mode: invariants may be broken
+  plan: null,              // Map(id -> start) while editing
+  lifted: null,            // op id currently picked up (edit mode)
   seenEvents: new Set(),
   hoverGhost: null,
   cleared: false,          // this level's goal met this session
@@ -84,8 +87,12 @@ function loadLevel(level, actions = []) {
   state.selectedRank = 0;
   state.hoverGhost = null;
   state.cleared = false;
+  state.editing = false;
+  state.plan = null;
   $('blurb').textContent = level.blurb;
   $('goal').textContent = goalText(level);
+  hideBanner();
+  setStatus('');
   logClear();
   saveHash();
   renderAll();
@@ -236,7 +243,21 @@ function projectRest() {
 
 // --- rendering ------------------------------------------------------------------
 
-function renderAll() { renderGrid(); renderPicker(); renderStats(); renderChrome(); }
+function renderAll() {
+  if (state.editing) { renderEditGrid(); renderEditChrome(); return; }
+  renderGrid(); renderPicker(); renderStats(); renderChrome();
+}
+
+function renderEditChrome() {
+  $('pickerTitle').textContent = 'Free edit mode';
+  $('picker').innerHTML = '<span class="hint">Click an op in the grid to lift it, then click a cell to drop it. ' +
+    'Shift-click unplaces an op (it moves to the tray). Violations are outlined red and listed under the grid.</span>';
+  $('editbtn').style.display = 'none';
+  $('editdone').style.display = '';
+  $('editcancel').style.display = '';
+  for (const id of ['undo', 'redo', 'hintbtn', 'autostep', 'autorun', 'projectbtn', 'resetbtn'])
+    $(id).disabled = true;
+}
 
 function opTitle(op, sim) {
   const deps = E.depsOf(sim.cfg, op).map(d => {
@@ -348,6 +369,233 @@ function renderMemStrip(sim, r, horizon) {
   return strip;
 }
 
+// Replace a placed idle at (rank, t) with a real op, keeping everything else.
+// Rebuild: annotate every action with its current start time, swap the idle
+// (consuming extra idles if the op is multi-slot), re-sort by start time so
+// cross-rank deps replay in a valid order, and validate atomically.
+function fillIdle(r, t, opId) {
+  const sim = state.sim;
+  const op = sim.byId.get(opId);
+  // annotate: rows[r][k] corresponds 1:1 to the k-th action of rank r
+  const perRank = Array.from({ length: sim.cfg.P }, () => []);
+  for (const a of sim.actions) perRank[a.rank].push(a);
+  const annotated = [];
+  for (let rr = 0; rr < sim.cfg.P; rr++) {
+    sim.rows[rr].forEach((item, k) => {
+      annotated.push({ start: item.start, idle: item.id === null, a: perRank[rr][k] });
+    });
+  }
+  // the op needs `dur` consecutive idle slots starting at t on this rank
+  const needed = [];
+  for (let d = 0; d < op.dur; d++) {
+    const hit = annotated.find(x => x.a.rank === r && x.start === t + d && x.idle);
+    if (!hit) {
+      setStatus(`${E.label(op)} takes ${op.dur} slots — needs idle at t=${t + d} too.`, 'err');
+      return;
+    }
+    needed.push(hit);
+  }
+  const rebuilt = annotated
+    .filter(x => !needed.includes(x) || x === needed[0])
+    .map(x => x === needed[0] ? { start: t, a: { rank: r, type: 'op', id: opId } } : x)
+    .sort((x, y) => x.start - y.start || x.a.rank - y.a.rank)
+    .map(x => x.a);
+  try {
+    state.sim = E.replay(sim.cfg, rebuilt);
+    state.batches = rebuilt.map(() => 1);
+    state.redo = [];
+    setStatus(`Filled the idle at rank ${r}, t=${t} with ${E.label(op)}.`);
+    afterChange({ rank: r, type: 'op', id: opId }, false);
+  } catch (err) {
+    setStatus(`Can't put ${E.label(op)} there: ${err.message}`, 'err');
+    if (err.reason?.dep) highlightDep(err.reason.dep);
+  }
+}
+
+function openIdlePopover(r, t, ev) {
+  state.selectedRank = r;
+  renderAll();
+  const pop = $('popover');
+  const sim = state.sim;
+  pop.innerHTML = '';
+  const pending = E.pendingOps(sim, r);
+  if (!pending.length) { pop.innerHTML = '<span class="hint">Rank finished ✓</span>'; }
+  const group = document.createElement('div');
+  group.className = 'kindgroup';
+  for (const op of pending.sort((a, b) =>
+      (a.kind > b.kind ? 1 : a.kind < b.kind ? -1 : 0) || a.mb - b.mb || a.stage - b.stage)) {
+    const ready = !E.blockReason(sim, op, t) ||
+      E.blockReason(sim, op, t).code === 'memory'; // memory depends on order; let replay judge
+    const btn = document.createElement('button');
+    btn.className = 'opbtn' + (state.assist !== 'none' && !ready ? ' notready' : '');
+    const st = cellStyle(state.theme, state.mode, op, sim.cfg);
+    btn.style.background = st.bg; btn.style.borderColor = st.border; btn.style.color = st.ink;
+    btn.innerHTML = `<span class="stg">${op.stage}</span>${op.kind}${op.mb}`;
+    btn.title = opTitle(op, sim);
+    btn.onclick = () => { closePopover(); fillIdle(r, t, op.id); };
+    group.appendChild(btn);
+  }
+  pop.appendChild(group);
+  pop.style.display = '';
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(ev.clientX - 24, innerWidth - pw - 8)) + 'px';
+  pop.style.top = Math.max(8, Math.min(ev.clientY + 14, innerHeight - ph - 8)) + 'px';
+}
+
+// --- free-edit mode -----------------------------------------------------------
+// Temporarily break invariants: move/lift/place ops anywhere on their rank,
+// violations shown live; only a violation-free plan can be committed back.
+
+function enterEdit() {
+  state.editing = true;
+  state.lifted = null;
+  state.plan = new Map([...state.sim.placed.entries()].map(([id, p]) => [id, p.start]));
+  closePopover(); hideBanner();
+  setStatus('✏️ Free edit: click an op to lift it, click a cell to drop it. Invariants may break — fix all violations to finish.');
+  renderAll();
+}
+
+function exitEdit(commit) {
+  if (!commit) {
+    state.editing = false; state.plan = null; state.lifted = null;
+    setStatus('Edit cancelled — schedule restored.');
+    renderAll();
+    return;
+  }
+  const v = E.planViolations(state.level.cfg, state.plan);
+  if (v.length) {
+    setStatus(`Can't finish: ${v.length} violation(s) remain — ${v[0].msg}`, 'err');
+    return;
+  }
+  const actions = E.planToActions(state.level.cfg, state.plan);
+  state.sim = E.replay(state.level.cfg, actions);
+  state.batches = actions.map(() => 1);
+  state.redo = [];
+  state.editing = false; state.plan = null; state.lifted = null;
+  setStatus('✓ Edits applied.');
+  afterChange(null, true);
+}
+
+function editViolations() {
+  return state.editing ? E.planViolations(state.level.cfg, state.plan) : [];
+}
+
+function editClickOp(opId) {
+  if (state.lifted === opId) state.lifted = null;        // put back down
+  else state.lifted = opId;                              // pick up
+  renderAll();
+}
+
+function editDrop(r, t) {
+  const op = state.sim.byId.get(state.lifted);
+  if (!op) return;
+  if (op.rank !== r) {
+    setStatus(`${E.label(op)} lives on rank ${op.rank} — it can't move to rank ${r}.`, 'err');
+    return;
+  }
+  state.plan.set(op.id, t);
+  state.lifted = null;
+  renderAll();
+}
+
+function editRemove(opId) {
+  state.plan.delete(opId);
+  if (state.lifted === opId) state.lifted = null;
+  renderAll();
+}
+
+function renderEditGrid() {
+  const sim = state.sim;
+  const cfg = sim.cfg;
+  const grid = $('grid');
+  grid.innerHTML = '';
+  const plan = state.plan;
+  const viol = editViolations();
+  const badIds = new Set(viol.map(v => v.id));
+  const horizon = Math.max(state.ref.score.makespan,
+    ...[...plan.entries()].map(([id, s]) => s + sim.byId.get(id).dur), 10) + 6;
+
+  const axis = document.createElement('div');
+  axis.className = 'timeaxis';
+  for (let t = 0; t < horizon; t++) {
+    const s = document.createElement('span');
+    if (t % 2 === 0) s.textContent = t;
+    axis.appendChild(s);
+  }
+  grid.appendChild(axis);
+
+  for (let r = 0; r < cfg.P; r++) {
+    const row = document.createElement('div');
+    row.className = 'rankrow editing';
+    const head = document.createElement('div');
+    head.className = 'rankhead';
+    head.innerHTML = `<span class="rname">rank ${r}</span>` +
+      `<span class="rmeta">stage${E.rankStages(cfg, r).length > 1 ? 's' : ''} ${E.rankStages(cfg, r).join(',')}</span>`;
+    row.appendChild(head);
+    const lane = document.createElement('div');
+    lane.className = 'lane';
+    lane.style.width = (horizon * CELL) + 'px';
+    // drop cells (behind ops) when an op of this rank is lifted
+    const liftedOp = state.lifted ? sim.byId.get(state.lifted) : null;
+    if (liftedOp && liftedOp.rank === r) {
+      for (let t = 0; t < horizon - 1; t++) {
+        const cell = document.createElement('div');
+        cell.className = 'slot dropcell';
+        cell.style.left = (t * CELL + 1) + 'px';
+        cell.onclick = ev => { ev.stopPropagation(); editDrop(r, t); };
+        lane.appendChild(cell);
+      }
+    }
+    for (const [id, start] of plan) {
+      const op = sim.byId.get(id);
+      if (op.rank !== r) continue;
+      const el = renderItem({ id, start, dur: op.dur }, sim, true);
+      el.classList.remove('ghost');
+      if (badIds.has(id)) el.classList.add('violation');
+      if (state.lifted === id) el.classList.add('lifted');
+      el.title = opTitle(op, sim) + '\n(click to lift/move; shift-click to unplace)';
+      el.onclick = ev => {
+        ev.stopPropagation();
+        if (ev.shiftKey) editRemove(id); else editClickOp(id);
+      };
+      lane.appendChild(el);
+    }
+    row.appendChild(lane);
+    grid.appendChild(row);
+  }
+
+  // tray of unplaced ops + violations list
+  const tray = document.createElement('div');
+  tray.className = 'edittray';
+  const unplaced = sim.ops.filter(o => !plan.has(o.id));
+  if (unplaced.length) {
+    const lbl = document.createElement('span');
+    lbl.className = 'kindlabel';
+    lbl.textContent = `unplaced (${unplaced.length}):`;
+    tray.appendChild(lbl);
+    for (const op of unplaced.slice(0, 40)) {
+      const btn = document.createElement('button');
+      btn.className = 'opbtn' + (state.lifted === op.id ? ' pulse' : '');
+      const st = cellStyle(state.theme, state.mode, op, cfg);
+      btn.style.background = st.bg; btn.style.borderColor = st.border; btn.style.color = st.ink;
+      btn.innerHTML = `<span class="stg">${op.stage}</span>${op.kind}${op.mb}`;
+      btn.onclick = () => editClickOp(op.id);
+      tray.appendChild(btn);
+    }
+    if (unplaced.length > 40) tray.append(` …and ${unplaced.length - 40} more`);
+  }
+  grid.appendChild(tray);
+
+  const vlist = document.createElement('div');
+  vlist.className = 'violations';
+  vlist.innerHTML = viol.length
+    ? `<b>${viol.length} violation(s):</b><br>` +
+      viol.slice(0, 8).map(v => `• ${v.msg}`).join('<br>') +
+      (viol.length > 8 ? `<br>…and ${viol.length - 8} more` : '')
+    : '<b class="beat">✓ no violations</b> — press "finish editing" to apply.';
+  grid.appendChild(vlist);
+}
+
 // Rewind: truncate history to just before the action that placed `opId`.
 function rewindTo(opId) {
   const acts = state.sim.actions;
@@ -367,7 +615,17 @@ function renderItem(item, sim, isGhost = false) {
   const el = document.createElement('div');
   el.style.left = (item.start * CELL + 1) + 'px';
   el.style.width = (item.dur * CELL - 4) + 'px';
-  if (!item.id) { el.className = 'op idle'; el.title = 'idle (bubble)'; return el; }
+  if (!item.id) {
+    el.className = 'op idle';
+    if (isGhost) { el.title = 'idle (bubble)'; return el; }
+    el.title = `idle at t=${item.start} — click to fill it with work`;
+    el.onclick = ev => {
+      ev.stopPropagation();
+      const r = [...state.sim.rows.keys()].find(rr => state.sim.rows[rr].includes(item));
+      openIdlePopover(r, item.start, ev);
+    };
+    return el;
+  }
   const op = sim.byId.get(item.id);
   const st = cellStyle(state.theme, state.mode, op, sim.cfg);
   el.className = 'op' + (st.hatch ? ' hatch' : '');
@@ -594,6 +852,10 @@ function renderStats() {
 
 // show/hide progressive UI, populate level select with locks
 function renderChrome() {
+  $('editbtn').style.display = state.sim.actions.length ? '' : 'none';
+  $('editdone').style.display = 'none';
+  $('editcancel').style.display = 'none';
+  $('resetbtn').disabled = false;
   $('undo').disabled = !state.sim.actions.length;
   $('redo').disabled = !state.redo.length;
   const done = E.isDone(state.sim);
@@ -750,6 +1012,9 @@ function init() {
   $('autorun').onclick = autoRunUntilStrange;
   $('projectbtn').onclick = projectRest;
   $('unlockall').onclick = () => { store.unlockAll = true; renderChrome(); };
+  $('editbtn').onclick = enterEdit;
+  $('editdone').onclick = () => exitEdit(true);
+  $('editcancel').onclick = () => exitEdit(false);
   $('nextlevel').onclick = () => {
     const next = LEVELS[levelIndex(state.level.key) + 1];
     if (next) { hideBanner(); loadLevel(next); }
