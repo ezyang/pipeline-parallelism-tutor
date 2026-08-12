@@ -34,10 +34,7 @@ export function scheduleSVG(sim, { theme = 'microbatch', mode = 'light', title =
     for (const item of sim.rows[r]) {
       const x = HEAD + PAD + item.start * CELL;
       const w = item.dur * CELL - 3;
-      if (!item.id) {
-        out += `<rect x="${x + 1.5}" y="${y + 4}" width="${CELL - 3}" height="${ROWH - 8}" rx="3" fill="none" stroke="${grid}" stroke-dasharray="3,2"/>`;
-        continue;
-      }
+      if (!item.id) continue;   // bubbles are blank space, as in the papers
       const op = sim.byId.get(item.id);
       const st = cellStyle(theme, mode, op, cfg);
       out += `<rect x="${x + 1.5}" y="${y + 4}" width="${w}" height="${ROWH - 8}" rx="3" fill="${st.bg}" stroke="${st.border}" stroke-width="1.2"/>`;

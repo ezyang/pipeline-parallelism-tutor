@@ -385,3 +385,14 @@ test('ripplePlan: drag pushes downstream ops, preserves order, slack absorbs', (
   const rip3 = E.ripplePlan(cfg, s.byId, base, new Map([['B0_0', 2]]), -1);
   assert.strictEqual(rip3, null);
 });
+
+test('roundSize balances ragged microbatch counts; policy uses it', () => {
+  assert.strictEqual(E.roundSize({ P: 4, M: 8 }), 4);    // divisible: rounds of P
+  assert.strictEqual(E.roundSize({ P: 4, M: 10 }), 5);   // 2 rounds of 5, not 4+4+2
+  assert.strictEqual(E.roundSize({ P: 4, M: 6 }), 6);    // 1 round of 6
+  assert.strictEqual(E.roundSize({ P: 4, M: 3 }), 3);    // fewer than P: one small round
+  const cfg = { P: 4, V: 2, M: 10, model: '11', cap: 8, place: 'wrap' };
+  const r = E.referenceSchedule(cfg);
+  assert.ok(r.done);
+  assert.ok(r.score.makespan <= 53, `balanced rounds should reach 53, got ${r.score.makespan}`);
+});

@@ -235,6 +235,15 @@ export const POLICIES = {
 // count, clamped to total microbatch-chunks. cfg.warmup === 'zb2' uses the
 // deeper ZB-H2-style quota 2(P - rank) - 1, which admits enough forwards to
 // fill the warmup bubble entirely (at the cost of more activation memory).
+// Round size for interleaved (wrap) scheduling: microbatches advance in
+// groups ("rounds"). When M divides P this is just P; otherwise the leftover
+// is amortized across BALANCED rounds — e.g. M=10, P=4 gives two rounds of 5,
+// not 4+4+2 with a straggler round that wastes utilization.
+export function roundSize(cfg) {
+  const rounds = Math.max(1, Math.floor(cfg.M / cfg.P));
+  return Math.ceil(cfg.M / rounds);
+}
+
 export function warmupQuota(cfg, rank) {
   if (cfg.warmup === 'zb2')
     return Math.min(2 * (cfg.P - rank) - 1, cfg.M * cfg.V);
@@ -242,7 +251,7 @@ export function warmupQuota(cfg, rank) {
   // V-placement: no closed-form Megatron quota; depth-first under the cap
   // works well, so the quota is just the cap (i.e. effectively ungated).
   if (placement(cfg) === 'v') return cfg.cap ?? cfg.M * cfg.V;
-  const q = (cfg.P - rank - 1) * 2 + (cfg.V - 1) * cfg.P + 1;
+  const q = (cfg.P - rank - 1) * 2 + (cfg.V - 1) * roundSize(cfg) + 1;
   return Math.min(q, cfg.M * cfg.V);
 }
 
@@ -265,11 +274,12 @@ export function rankCandidates(state, rank, policyKey, relaxQuota = false) {
   const P = state.cfg.P;
   const S = numStages(state.cfg);
   // forwards climb stages 0..S-1; backwards descend S-1..0
+  const G = roundSize(state.cfg);   // balanced rounds when P doesn't divide M
   const key = placement(state.cfg) === 'v'
     ? o => o.mb * S + (o.kind === 'F' ? o.stage : S - 1 - o.stage)
     : o => {
         const st = o.kind === 'F' ? o.stage : S - 1 - o.stage;
-        return (Math.floor(o.mb / P) * S + st) * P + (o.mb % P);
+        return (Math.floor(o.mb / G) * S + st) * G + (o.mb % G);
       };
   cands.sort((a, b) =>
     (order[a.kind] - order[b.kind]) || (key(a) - key(b)));

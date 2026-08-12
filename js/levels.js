@@ -95,8 +95,25 @@ staggers the warmup instead. Compare with par (⇵), study where its extra
 gaps are, then try designing a block with those gaps built in.`,
   },
   {
+    key: 'ragged',
+    name: '7. Ragged rounds (M % P ≠ 0)',
+    cfg: { P: 4, V: 2, M: 10, model: '11', cap: 8, place: 'wrap' },
+    policy: '1f1b',
+    goal: 'par',
+    blurb: `Ten microbatches, four ranks: it doesn't divide. Interleaved
+schedules move microbatches in "rounds", and the naive grouping is
+4 + 4 + 2 — that last undersized round is a straggler that drags a
+half-empty wave through every chunk. The fix is bookkeeping, not physics:
+balance the rounds as 5 + 5 (rounds = ⌊M/P⌋, size = ⌈M/rounds⌉), so the
+two leftover microbatches ride inside full waves instead of forming their
+own. Par uses balanced rounds; watch the wavefront — each round is a BAND
+of 5 microbatches sweeping the pipe, wider than the pipe itself, and the
+warmup quota grows with round size ((P−r−1)·2 + (V−1)·5 + 1). Wrap
+placement here, because rounds are a wrap-schedule concept.`,
+  },
+  {
     key: 'b-twice-f',
-    name: '7. Backward costs 2×',
+    name: '8. Backward costs 2×',
     cfg: { P: 4, V: 1, M: 8, model: '12', cap: 4 },
     policy: '1f1b',
     goal: 'par',
@@ -107,7 +124,7 @@ and bubbles cost more where backwards gate the critical path.`,
   },
   {
     key: 'zero-bubble',
-    name: '8. Zero-bubble (F/B/W)',
+    name: '9. Zero-bubble (F/B/W)',
     cfg: { P: 4, V: 1, M: 8, model: 'zb', cap: 4 },
     policy: 'zb',
     goal: 'par',
@@ -119,7 +136,7 @@ Same memory as 1F1B — W frees the activation, so delaying W costs memory.`,
   },
   {
     key: 'zb-h2',
-    name: '9. ZB-H2: buy zero with memory',
+    name: '10. ZB-H2: buy zero with memory',
     cfg: { P: 4, V: 1, M: 8, model: 'zb', cap: 8, warmup: 'zb2' },
     policy: 'zb',
     goal: 'internal0',

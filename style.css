@@ -108,10 +108,9 @@ main > div { min-width: 0; }
 .op.hatch {
   background-image: repeating-linear-gradient(45deg, transparent 0 4px, rgba(0,0,0,0.13) 4px 6px);
 }
-.op.idle {
-  border: 1px dashed var(--axis); background: transparent; box-shadow: none;
-  background-image: repeating-linear-gradient(45deg, transparent 0 5px, var(--grid) 5px 7px);
-}
+/* committed idles look like empty grid (bubbles are blank space, as in the
+   papers) — they remain invisible hit targets for hover/click */
+.op.idle { border: 1px solid transparent; background: transparent; box-shadow: none; }
 .op.dim { opacity: 0.22; }
 .op .stg, .opbtn .stg {
   font-size: 8px; font-weight: 700; opacity: 0.75;
@@ -152,7 +151,7 @@ main > div { min-width: 0; }
 .slot.future:hover { opacity: 0.8; }
 .slot.future:hover::after { content: "+"; }
 .op.idle { cursor: pointer; }
-.op.idle:hover { border-color: var(--accent); opacity: 1; }
+.op.idle:hover { border-color: var(--accent); border-style: dashed; }
 
 /* free-edit mode */
 .op.crit { outline: 2.5px solid var(--ink); outline-offset: 1px; z-index: 7; }

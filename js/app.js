@@ -55,6 +55,7 @@ const state = {
   playT: null,             // playback cursor (null = not playing)
   playTimer: null,
   editing: false,          // free-edit mode: invariants may be broken
+  autoEdit: false,         // edit mode entered via an illegal placement; auto-exits when clean
   plan: null,              // Map(id -> start) while editing
   lifted: null,            // op id currently picked up (edit mode)
   strandMb: null,          // microbatch strand selected for shifting (edit mode)
@@ -156,11 +157,47 @@ function tryActions(actions, { silent = false } = {}) {
     afterChange(actions[actions.length - 1], silent);
     return true;
   } catch (err) {
+    // Illegal placement: instead of rejecting, drop into edit mode with the
+    // op where the user asked for it — the violation shows, and fixing it
+    // (or moving the op) auto-commits back to normal play.
+    const opAction = [...actions].reverse().find(a => a.type === 'op');
+    if (opAction && err.reason && err.reason.code !== 'wrong-rank' && !state.editing) {
+      const r = opAction.rank;
+      const pads = actions.filter(a => a.type === 'idle' && a.rank === r).length;
+      const t = state.sim.frontier[r] + pads;
+      enterAutoEdit(opAction.id, t, err.message);
+      return false;
+    }
     setStatus(err.message, 'err');
     if (err.reason?.dep) highlightDep(err.reason.dep);
     log(err.message, 'err');
     return false;
   }
+}
+
+// Enter edit mode because of an illegal placement: the op sits where the user
+// wanted it, outlined red, with the violation explained. Fix the board (drag
+// things, place missing deps) and it auto-commits the moment it's clean.
+function enterAutoEdit(opId, t, why) {
+  state.editing = true;
+  state.autoEdit = true;
+  state.lifted = null;
+  state.strandMb = null;
+  state.plan = new Map([...state.sim.placed.entries()].map(([id, p]) => [id, p.start]));
+  state.plan.set(opId, t);
+  closePopover(); hideBanner();
+  setStatus(`⚠ ${why} — you're in edit mode: the op is placed anyway (red outline). ` +
+    `Drag things around or add what's missing; the edit commits itself once every constraint is satisfied.`, 'err');
+  renderAll();
+}
+
+// Auto-commit an auto-entered edit as soon as the plan is violation-free.
+// Called on settled edit events (drop, shift, remove, autofill) — never mid-drag.
+function maybeAutoExit() {
+  if (!state.editing || !state.autoEdit) return;
+  if (E.planViolations(state.level.cfg, state.plan).length) return;
+  exitEdit(true);
+  setStatus('✓ All constraints satisfied — edits applied, back to normal play.');
 }
 
 function autoAdvanceSelection() {
@@ -629,6 +666,7 @@ function openIdlePopover(r, t, ev) {
 
 function enterEdit() {
   state.editing = true;
+  state.autoEdit = false;
   state.lifted = null;
   state.strandMb = null;
   state.plan = new Map([...state.sim.placed.entries()].map(([id, p]) => [id, p.start]));
@@ -639,7 +677,8 @@ function enterEdit() {
 
 function exitEdit(commit) {
   if (!commit) {
-    state.editing = false; state.plan = null; state.lifted = null; state.strandMb = null;
+    state.editing = false; state.autoEdit = false;
+    state.plan = null; state.lifted = null; state.strandMb = null;
     setStatus('Edit cancelled — schedule restored.');
     renderAll();
     return;
@@ -653,7 +692,8 @@ function exitEdit(commit) {
   state.sim = E.replay(state.level.cfg, actions);
   state.batches = actions.map(() => 1);
   state.redo = [];
-  state.editing = false; state.plan = null; state.lifted = null; state.strandMb = null;
+  state.editing = false; state.autoEdit = false;
+  state.plan = null; state.lifted = null; state.strandMb = null;
   setStatus('✓ Edits applied.');
   afterChange(null, true);
 }
@@ -678,12 +718,14 @@ function editDrop(r, t) {
   state.plan.set(op.id, t);
   state.lifted = null;
   renderAll();
+  maybeAutoExit();
 }
 
 function editRemove(opId) {
   state.plan.delete(opId);
   if (state.lifted === opId) state.lifted = null;
   renderAll();
+  maybeAutoExit();
 }
 
 // --- dragging -------------------------------------------------------------------
@@ -757,6 +799,7 @@ function onEditDragEnd() {
       : 'Dropped. ✓ no violations.');
     suppressNextClick = true;            // the browser fires click after pointerup
     setTimeout(() => { suppressNextClick = false; }, 0);
+    maybeAutoExit();
   }
 }
 let suppressNextClick = false;
@@ -771,6 +814,7 @@ function shiftStrand(delta) {
     ? `Strand shifted. ${v.length} violation(s) — keep going or shift back.`
     : 'Strand shifted. ✓ no violations.');
   renderAll();
+  maybeAutoExit();
 }
 
 function renderEditGrid() {
@@ -909,6 +953,7 @@ function renderEditGrid() {
             ev.preventDefault();
             for (const [id, t] of comp.forced) state.plan.set(id, t);
             renderAll();
+            maybeAutoExit();
           };
           line.appendChild(a);
         }
@@ -1064,7 +1109,11 @@ function buildOpButtons(box, r, at = null, compact = false) {
         },
       });
       btn.onmouseenter = () => previewConsequence(op, ready, r, t);
-      btn.onmouseleave = () => { $('hint').textContent = ''; state.hoverGhost = null; renderGrid(); };
+      btn.onmouseleave = () => {
+        $('hint').textContent = '';
+        state.hoverGhost = null;
+        if (!state.editing) renderGrid();
+      };
       group.appendChild(btn);
     }
     box.appendChild(group);
