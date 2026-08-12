@@ -56,12 +56,23 @@ in-flight activations per rank vs. the cap.
 
 ## Extras
 
-- Click the **+** slot at a rank's frontier to place ops in situ; click a
-  placed op to rewind to just before it (redo restores).
-- Hover any op to trace deps (red = needs, green = unblocks); hover a
-  candidate in the picker to see a ghost projection and the makespan cost of
-  a legal-but-bad move.
-- Per-rank activation-memory strips under each lane (red at the cap).
+- Click any empty slot to place an op there (gaps auto-fill with idles,
+  committed atomically); click a placed op to rewind; click an idle in a
+  finished-prefix to fill it with work.
+- **✏️ free edit**: lift/move/unplace ops with invariants temporarily broken;
+  live violation list says whether the holes are fixable (and autofills ops
+  that have exactly one legal slot); only a consistent plan commits.
+- **▶ play**: animate the schedule — a time cursor sweeps, the op running on
+  each rank lights up, with a narration line per tick.
+- On completion: schedule **recognition** ("You built 1F1B / ZB-H2 / …" or
+  "this one's yours"), **🔦 critical path** (with voluntary-delay detection),
+  **⇵ compare with par** on a shared time axis, and per-bubble explanations
+  on idle hover ("this bubble exists because…").
+- Hover any op to trace deps (red = needs, green = unblocks); in coach mode,
+  hovering a candidate ghost-projects the consequence and its makespan cost.
+- Per-rank activation-memory strips above each lane (red at the cap).
+- Best solutions auto-save per level (✓ in the level list, 📂 to reload);
+  🔗 share copies a URL reproducing the exact position.
 - Color themes: microbatch-colored (default, colorblind-validated palette,
   light+dark), or "paper style" (kind-colored like the Megatron / zero-bubble
   figures).
