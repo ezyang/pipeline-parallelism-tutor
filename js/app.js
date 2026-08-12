@@ -897,19 +897,35 @@ function renderStats() {
   if (!featureOn('scoreboard')) { panel.style.display = 'none'; return; }
   panel.style.display = '';
   const s = E.score(sim);
+  // when the reference is on display, add its per-rank util/peak for comparison
+  const withPar = state.showCompare;
+  const ref = state.ref.state;
+  const rankUtil = (st, r) => {
+    const busy = st.rows[r].filter(i => i.id).reduce((a, i) => a + i.dur, 0);
+    const t = st.frontier[r];
+    return t ? busy / t : null;
+  };
   const rows = [];
   for (let r = 0; r < sim.cfg.P; r++) {
-    const busy = sim.rows[r].filter(i => i.id).reduce((a, i) => a + i.dur, 0);
-    const t = sim.frontier[r];
-    rows.push(`<tr><td>rank ${r}</td><td>${t}</td>` +
-      `<td>${t ? pct(busy / t) : '—'}</td>` +
-      `<td>${sim.peak[r]}${sim.cfg.cap != null ? '/' + sim.cfg.cap : ''}</td></tr>`);
+    const u = rankUtil(sim, r);
+    const capSuffix = sim.cfg.cap != null ? '/' + sim.cfg.cap : '';
+    let cells = `<td>rank ${r}</td><td>${sim.frontier[r]}</td>` +
+      `<td>${u === null ? '—' : pct(u)}</td>` +
+      `<td>${sim.peak[r]}${capSuffix}</td>`;
+    if (withPar) {
+      const pu = rankUtil(ref, r);
+      cells += `<td class="parcol">${pu === null ? '—' : pct(pu)}</td>` +
+        `<td class="parcol">${ref.peak[r]}${capSuffix}</td>`;
+    }
+    rows.push(`<tr>${cells}</tr>`);
   }
   const done = E.isDone(sim);
   const parM = state.ref.score.makespan;
   $('stats').innerHTML =
     `<table class="stats">
-      <tr><th>rank</th><th>t</th><th>util</th><th>peak mem</th></tr>
+      <tr><th>rank</th><th>t</th><th>util</th><th>peak mem</th>` +
+      (withPar ? '<th class="parcol">par util</th><th class="parcol">par mem</th>' : '') +
+      `</tr>
       ${rows.join('')}
     </table>
     <table class="stats" style="margin-top:8px">
@@ -1052,6 +1068,7 @@ function renderCompare() {
 function toggleCompare() {
   state.showCompare = !state.showCompare;
   renderCompare();
+  renderStats();
   if (E.isDone(state.sim)) showBanner(state.cleared || goalMet(E.score(state.sim)), E.score(state.sim));
   if (state.showCompare) {
     const d = E.score(state.sim).makespan - state.ref.score.makespan;

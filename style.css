@@ -210,7 +210,8 @@ main > div { min-width: 0; }
 table.stats { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 table.stats td, table.stats th { padding: 3px 6px; text-align: right; font-size: 12.5px; border-bottom: 1px solid var(--grid); }
 table.stats th { color: var(--muted); font-weight: 500; text-align: right; }
-table.stats td:first-child, table.stats th:first-child { text-align: left; }
+table.stats td:first-child, table.stats th:first-child { text-align: left; white-space: nowrap; }
+table.stats .parcol { color: var(--muted); border-left: 1px solid var(--grid); }
 .phase { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--axis); color: var(--ink-2); }
 .phase.warmup { border-color: var(--accent); color: var(--accent); }
 .phase.steady { border-color: var(--good); color: var(--good); }
