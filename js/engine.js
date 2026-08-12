@@ -791,6 +791,61 @@ export function squeezeBlock(state, mb) {
   return planViolations(cfg, plan).length ? null : plan;
 }
 
+// Is the board a clean prefix: microbatches 0..k-1 fully scheduled, nothing
+// else? Returns k (the next microbatch to stamp), or null.
+export function microbatchPrefix(state) {
+  const placedMbs = new Set([...state.placed.keys()].map(id => state.byId.get(id).mb));
+  if (!placedMbs.size) return null;
+  const k = Math.max(...placedMbs) + 1;
+  for (let m = 0; m < k; m++) {
+    if (state.ops.some(o => o.mb === m && !state.placed.has(o.id))) return null;
+  }
+  return k <= state.cfg.M - 1 ? k : null;
+}
+
+// Stamp ONE more microbatch strand, greedily: each op of microbatch k aims
+// for its pattern slot (mb0's time + k*w) and gets shoved right until it is
+// legal — deps met, rank slot free, memory cap respected. Returns
+// { plan, shoves: [{id, target, actual}] } or { violations }.
+export function stampNextMicrobatch(state) {
+  const cfg = state.cfg;
+  const k = microbatchPrefix(state);
+  if (k === null) return { violations: [{ msg: 'need microbatches 0..k-1 fully scheduled, nothing else' }] };
+  const w = blockInterval(cfg);
+  const plan = new Map([...state.placed.entries()].map(([id, p]) => [id, p.start]));
+  const blockOps = state.ops.filter(o => o.mb === 0)
+    .map(o => ({ o, start: state.placed.get(o.id).start }))
+    .sort((a, b) => a.start - b.start);
+  const shoves = [];
+  for (const { o, start } of blockOps) {
+    const id = opId(o.kind, o.stage, k);
+    const op = state.byId.get(id);
+    const target = start + k * w;
+    let t = target;
+    // dep floor
+    for (const depId of depsOf(cfg, op)) {
+      const dep = state.byId.get(depId);
+      if (!plan.has(depId)) return { violations: [{ msg: `${label(op)} needs ${label(dep)}, which isn't scheduled` }] };
+      t = Math.max(t, plan.get(depId) + dep.dur);
+    }
+    // shove right past same-rank occupancy and memory violations
+    const occupied = tt => [...plan.entries()].some(([pid, ps]) => {
+      const po = state.byId.get(pid);
+      return po.rank === op.rank && tt < ps + po.dur && ps < tt + op.dur;
+    });
+    let guard = 0;
+    for (;;) {
+      if (guard++ > 10000) return { violations: [{ msg: `${label(op)} can't be placed` }] };
+      if (occupied(t)) { t++; continue; }
+      plan.set(id, t);
+      if (planViolations(cfg, plan).length) { plan.delete(id); t++; continue; }
+      break;
+    }
+    if (t > target) shoves.push({ id, target, actual: t });
+  }
+  return { plan, shoves, mb: k };
+}
+
 // Stamp the block: replicate every placed op for all other microbatches,
 // shifted by (mb' - mb) * w. Returns {actions} on success or {violations}.
 export function stampBlock(state, mb) {

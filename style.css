@@ -156,6 +156,11 @@ main > div { min-width: 0; }
 
 /* free-edit mode */
 .op.crit { outline: 2.5px solid var(--ink); outline-offset: 1px; z-index: 7; }
+.op.shoved { animation: shovedflash 1.2s 3; }
+@keyframes shovedflash {
+  0%, 100% { outline: 0 solid transparent; }
+  50% { outline: 3px solid var(--bad); outline-offset: 1px; }
+}
 .op.future { opacity: 0.13; transition: opacity 0.25s; }
 .op.running { outline: 2.5px solid var(--accent); outline-offset: 1px; z-index: 7;
   transition: outline-color 0.15s; }

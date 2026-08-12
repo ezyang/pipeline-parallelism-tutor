@@ -1110,54 +1110,60 @@ function renderChrome() {
   $('playbtn').disabled = !state.sim.actions.length;
   $('svgbtn').disabled = !state.sim.actions.length;
 
-  // ⧉ stamp: available when exactly one microbatch is fully scheduled
-  const soleMb = E.soleMicrobatch(state.sim);
-  const stampable = soleMb !== null && !E.isDone(state.sim);
-  $('stampbtn').style.display = stampable ? '' : 'none';
-  if (stampable) {
-    const bs = E.blockStats(state.sim, soleMb);
+  // ⧉ stamp: available when microbatches 0..k-1 are done and nothing else is
+  const nextMb = E.microbatchPrefix(state.sim);
+  $('stampbtn').style.display = nextMb !== null ? '' : 'none';
+  if (nextMb !== null) {
+    const bs = E.blockStats(state.sim, 0);
+    const M = state.sim.cfg.M;
+    $('stampbtn').textContent = `⧉ stamp mb ${nextMb}`;
     $('stampbtn').title =
-      `Repeat microbatch ${soleMb}'s trajectory for all ${state.sim.cfg.M} microbatches, ` +
-      `shifted ${bs.w} slots apart. Predicted peak memory per rank: ${bs.peak.join('/')}` +
-      (state.sim.cfg.cap != null ? ` (cap ${state.sim.cfg.cap})` : '') +
-      `. The block's lifespan on each rank determines its memory (Qi et al. 2024).`;
+      `Place microbatch ${nextMb} by copying microbatch 0's trajectory, shifted ` +
+      `${nextMb}×${bs.w} slots. Each op aims for its pattern slot and gets shoved ` +
+      `RIGHT if something is in the way (dep not done, rank busy, memory full) — ` +
+      `watch for shoves; they are where your block fails to tile. ` +
+      `Shift-click to stamp all ${M - nextMb} remaining microbatches at once.`;
   }
 }
 
-function stampCurrentBlock() {
-  const mb = E.soleMicrobatch(state.sim);
-  if (mb === null) return;
-  let sim = state.sim;
-  let res = E.stampBlock(sim, mb);
-  let squeezed = false;
-  if (res.violations && res.violations.some(v => /overlaps/.test(v.msg))) {
-    // the paper's repair: keep the op order, re-time so each rank's ops land
-    // on distinct residues mod w, then try again
-    const sq = E.squeezeBlock(sim, mb);
-    if (sq) {
-      const sim2 = E.replay(state.level.cfg, E.planToActions(state.level.cfg, sq));
-      const res2 = E.stampBlock(sim2, mb);
-      if (res2.actions) { sim = sim2; res = res2; squeezed = true; }
+// Stamp one strand (or all remaining with shift). Greedy: ops aim at their
+// pattern slot and are visibly shoved right when blocked.
+function stampCurrentBlock(ev) {
+  const all = ev?.shiftKey;
+  let totalShoves = [];
+  let guard = 0;
+  do {
+    const res = E.stampNextMicrobatch(state.sim);
+    if (res.violations) {
+      setStatus(`⧉ Can't stamp: ${res.violations[0].msg}`, 'err');
+      return;
     }
-  }
-  if (res.violations) {
-    setStatus(`⧉ This block doesn't tile: ${res.violations[0].msg}`, 'err');
-    return;
-  }
-  const bs = E.blockStats(sim, mb);
-  state.sim = E.replay(state.level.cfg, res.actions);
-  state.batches = res.actions.map(() => 1);
-  state.redo = [];
-  if (squeezed) {
-    log(`Your block overlapped itself when repeated every ${bs.w} slots, so it was ` +
-        `"squeezed" first: same op order, ops nudged later so each rank's ops land on ` +
-        `distinct time-residues mod ${bs.w}. Then stamped ×${state.sim.cfg.M}.`, 'event');
-    setStatus(`⧉ Block squeezed (re-timed to tile), then stamped. Compare with par (⇵) to see what the re-timing cost.`);
+    const actions = E.planToActions(state.level.cfg, res.plan);
+    state.sim = E.replay(state.level.cfg, actions);
+    state.batches = actions.map(() => 1);
+    state.redo = [];
+    totalShoves.push(...res.shoves);
+    if (res.shoves.length) {
+      log(`Stamped microbatch ${res.mb}: ${res.shoves.length} op(s) shoved right of their ` +
+          `pattern slot — ${res.shoves.slice(0, 3).map(s =>
+            `${E.label(state.sim.byId.get(s.id))} ${s.target}→${s.actual}`).join(', ')}` +
+          (res.shoves.length > 3 ? ', …' : '') + '.', 'event');
+    } else {
+      log(`Stamped microbatch ${res.mb}: clean fit, no shoves.`, 'event');
+    }
+  } while (all && E.microbatchPrefix(state.sim) !== null && guard++ < 64);
+  if (totalShoves.length) {
+    setStatus(`⧉ ${totalShoves.length} op(s) got shoved right of the uniform pattern (flashing). ` +
+      `That drift is the cost of a block that doesn't tile cleanly.`);
   } else {
-    log(`Stamped microbatch ${mb}'s block across all ${state.sim.cfg.M} microbatches ` +
-        `(interval ${bs.w}, predicted peak ${bs.peak.join('/')}).`, 'event');
+    setStatus('⧉ Clean stamp — the strand dropped exactly into the pattern.');
   }
   afterChange(null, true);
+  // flash the shoved ops so the drift is visible on the grid
+  for (const s of totalShoves) {
+    document.querySelectorAll(`#grid .op[data-opid="${CSS.escape(s.id)}"]`)
+      .forEach(el => el.classList.add('shoved'));
+  }
   $('logPanel').style.display = $('log').childElementCount ? '' : 'none';
 }
 
@@ -1378,7 +1384,7 @@ function init() {
   };
   $('cfgapply').onclick = () => loadLevel(customLevel(readCustomCfg()));
   $('hintbtn').onclick = showHint;
-  $('stampbtn').onclick = stampCurrentBlock;
+  $('stampbtn').onclick = ev => stampCurrentBlock(ev);
   document.addEventListener('click', e => {
     if (!$('popover').contains(e.target) && !e.target.classList?.contains('slot'))
       closePopover();

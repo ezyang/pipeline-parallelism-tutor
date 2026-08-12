@@ -68,11 +68,12 @@ feel the rhythm, then let ▸▸ grind and take over at the interesting bits.`,
     blurb: `A schedule is really ONE microbatch's trajectory — a "building
 block" — repeated every 2 slots (Qi et al. 2024). So don't place 64 ops:
 design the block. Schedule ONLY microbatch 0 (all its Fs and Bs, idling as
-needed), and a ⧉ stamp button appears with a prediction of the peak memory
-your block implies — its per-rank lifespan (first F to last B) divided by
-the repeat interval. Stamp it to replicate across all 8 microbatches. If
-your block was 1F1B-shaped you just rebuilt level 4 in a tenth of the
-clicks; if it was too eager, the stamp will name the constraint it breaks.`,
+needed), then ⧉ stamp the next strand: microbatch 1 copies the block, 2
+slots later. Each op aims for its pattern slot and gets SHOVED RIGHT
+(flashing red) if something is in the way — a busy rank, an unfinished dep,
+a full memory cap. Stamp strand by strand and watch whether your block
+tiles cleanly or drifts; shift-click stamps all remaining at once. A
+1F1B-shaped block tiles perfectly — that's what makes it the classic.`,
   },
   {
     key: 'interleaved',
@@ -85,13 +86,13 @@ down ranks 0→3, chunk 1 runs back UP 3→0. So rank 0 has stages 0 and 7,
 and rank 3 has 3 and 4 — a microbatch bounces off the pipe ends, and at
 each bounce the next stage is on the SAME rank (no communication hop).
 This is the placement ZB-V and DualPipe use. Follow microbatch 0's ghosts
-and watch the V shape draw itself, then ⧉ stamp: your tight block overlaps
-itself when repeated every w=4 slots, so the stamp will "squeeze" it first —
-same op order, ops nudged later so each rank's ops land on distinct
-time-residues mod 4 (the tiling condition). That legal-but-loose result
-loses to par (47 vs 38): uniform repetition isn't optimal here, which is
-exactly why real V schedules stagger the warmup. Compare with par (⇵) to
-see the difference, or run-until-strange and steer.`,
+and watch the V shape draw itself, then ⧉ stamp strand by strand — and
+watch the shoves. A tight V block does NOT tile at w=4 (rank 0 already has
+ops at both residues its neighbors need), so each stamped strand gets
+shoved right of the pattern and the drift compounds. That drift is the
+lesson: greedy repetition of a tight block loses to par (38), which
+staggers the warmup instead. Compare with par (⇵), study where its extra
+gaps are, then try designing a block with those gaps built in.`,
   },
   {
     key: 'b-twice-f',

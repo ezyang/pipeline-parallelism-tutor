@@ -299,3 +299,57 @@ test('squeezeBlock repairs a depth-first V-placement block into a tiling one', (
   const full = E.replay(cfg, res.actions);
   assert.ok(E.isDone(full));
 });
+
+test('stampNextMicrobatch: clean tile for 1F1B block, shoves for tight V block', () => {
+  // 1F1B block: stamp strand by strand, no shoves, ends at makespan 22
+  const cfg = { P: 4, V: 1, M: 8, model: '11', cap: 4 };
+  const ref = E.referenceSchedule(cfg).state;
+  let s = E.newState(cfg);
+  const acts = [];
+  for (let r = 0; r < cfg.P; r++) {
+    const items = ref.rows[r].filter(it => it.id && ref.byId.get(it.id).mb === 0);
+    let t = 0;
+    for (const it of items.sort((a, b) => a.start - b.start)) {
+      for (; t < it.start; t++) acts.push({ start: t, a: { rank: r, type: 'idle' } });
+      acts.push({ start: it.start, a: { rank: r, type: 'op', id: it.id } });
+      t = it.start + it.dur;
+    }
+  }
+  acts.sort((x, y) => x.start - y.start || x.a.rank - y.a.rank);
+  for (const { a } of acts) E.apply(s, a);
+  let shoveTotal = 0;
+  while (E.microbatchPrefix(s) !== null) {
+    const res = E.stampNextMicrobatch(s);
+    assert.ok(res.plan, res.violations?.[0]?.msg);
+    shoveTotal += res.shoves.length;
+    s = E.replay(cfg, E.planToActions(cfg, res.plan));
+  }
+  assert.ok(E.isDone(s));
+  assert.strictEqual(shoveTotal, 0);
+  assert.strictEqual(E.score(s).makespan, 22);
+
+  // tight V block: strand 1 must get shoved
+  const vcfg = { P: 4, V: 2, M: 8, model: '11', cap: 8 };
+  const chain = [];
+  for (let st = 0; st < 8; st++) chain.push(['F', st]);
+  for (let st = 7; st >= 0; st--) chain.push(['B', st]);
+  const vacts = [];
+  const frontier = [0, 0, 0, 0];
+  let t = 0;
+  for (const [k, st] of chain) {
+    const r = E.stageRank(vcfg, st);
+    while (frontier[r] < t) { vacts.push({ rank: r, type: 'idle' }); frontier[r]++; }
+    vacts.push({ rank: r, type: 'op', id: E.opId(k, st, 0) });
+    frontier[r]++; t++;
+  }
+  let vsim = E.replay(vcfg, vacts);
+  let vShoves = 0;
+  while (E.microbatchPrefix(vsim) !== null) {
+    const res = E.stampNextMicrobatch(vsim);
+    assert.ok(res.plan, res.violations?.[0]?.msg);
+    vShoves += res.shoves.length;
+    vsim = E.replay(vcfg, E.planToActions(vcfg, res.plan));
+  }
+  assert.ok(E.isDone(vsim));
+  assert.ok(vShoves > 0, 'tight V block should shove somewhere across strands');
+});
