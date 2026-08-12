@@ -59,7 +59,6 @@ const state = {
   lifted: null,            // op id currently picked up (edit mode)
   seenEvents: new Set(),
   hoverGhost: null,
-  followGhosts: [],        // clickable "just unblocked" ghosts after a placement
   cleared: false,          // this level's goal met this session
 };
 
@@ -99,7 +98,6 @@ function loadLevel(level, actions = []) {
   state.seenEvents = new Set();
   state.selectedRank = 0;
   state.hoverGhost = null;
-  state.followGhosts = [];
   state.cleared = false;
   state.editing = false;
   state.plan = null;
@@ -174,20 +172,51 @@ function autoAdvanceSelection() {
   if (pick !== null) state.selectedRank = pick;
 }
 
+// Earliest place `op` can actually go: at/after the frontier, or inside an
+// existing run of >= dur idle slots (filled via fillIdle). Null if neither.
+function earliestSite(sim, op) {
+  const ready = E.earliestStart(sim, op);
+  if (ready === Infinity) return null;
+  const r = op.rank;
+  let best = Math.max(ready, sim.frontier[r]);   // frontier placement
+  let mode = 'frontier';
+  // idle-gap placement: find earliest run of op.dur consecutive idles >= ready
+  const idles = sim.rows[r].filter(it => !it.id).map(it => it.start);
+  const idleSet = new Set(idles);
+  for (const t of idles.sort((a, b) => a - b)) {
+    if (t < ready) continue;
+    if (t >= best) break;
+    let fits = true;
+    for (let d = 1; d < op.dur; d++) if (!idleSet.has(t + d)) { fits = false; break; }
+    if (fits) { best = t; mode = 'idle'; break; }
+  }
+  return { t: best, mode };
+}
+
+// All current proposals, derived from state (so they persist across
+// placements, microbatch switches, and undo): every unplaced op whose deps
+// are all placed AND that continues something already on the board — either
+// a direct dep is placed (chain continuation) or the same op for the previous
+// microbatch is placed (start the next microbatch). Stage-0 F0_0 aside, this
+// keeps the board from drowning in ghosts at level start.
+function computeFollowGhosts(sim) {
+  if (E.isDone(sim)) return [];
+  const out = [];
+  for (const op of sim.ops) {
+    if (sim.placed.has(op.id)) continue;
+    const deps = E.depsOf(sim.cfg, op);
+    if (!deps.every(d => sim.placed.has(d))) continue;
+    const chainCont = deps.length > 0;   // deps placed (checked above)
+    const prevMb = op.mb > 0 && sim.placed.has(E.opId(op.kind, op.stage, op.mb - 1));
+    if (!chainCont && !prevMb) continue;
+    const site = earliestSite(sim, op);
+    if (site) out.push({ id: op.id, rank: op.rank, ...site });
+  }
+  return out;
+}
+
 function afterChange(action, silent) {
   const sim = state.sim;
-  // "follow the microbatch": ghost the ops this placement just unblocked, at
-  // their earliest legal slots — click one to chase the chain across ranks
-  state.followGhosts = [];
-  if (action?.type === 'op' && !E.isDone(sim)) {
-    for (const dep of sim.ops) {
-      if (sim.placed.has(dep.id)) continue;
-      if (!E.depsOf(sim.cfg, dep).includes(action.id)) continue;
-      const t = E.earliestStart(sim, dep);
-      if (t === Infinity || t < sim.frontier[dep.rank]) continue;
-      state.followGhosts.push({ id: dep.id, rank: dep.rank, start: t });
-    }
-  }
   if (action?.type === 'op' && !silent) {
     const op = sim.byId.get(action.id);
     if (op.kind === 'B' && sim.rows[action.rank].filter(
@@ -236,7 +265,6 @@ function undo() {
   const n = state.batches.pop() ?? 1;
   state.redo.push(acts.slice(acts.length - n));
   state.sim = E.replay(state.level.cfg, acts.slice(0, acts.length - n));
-  state.followGhosts = [];
   hideBanner(); setStatus('');
   autoAdvanceSelection();
   saveHash(); renderAll();
@@ -374,6 +402,7 @@ function renderGrid() {
 
   const critSet = state.showCrit && E.isDone(sim)
     ? new Set(E.criticalPath(sim).ids) : null;
+  const followGhosts = state.editing ? [] : computeFollowGhosts(sim);
 
   for (let r = 0; r < cfg.P; r++) {
     const row = document.createElement('div');
@@ -404,16 +433,19 @@ function renderGrid() {
         lane.appendChild(el);
       }
     }
-    // "just unblocked" follow ghosts: click to place (pads idles up to the slot)
-    for (const g of state.followGhosts.filter(g => g.rank === r)) {
+    // follow ghosts: ready continuations (chain or next microbatch), clickable.
+    // Frontier sites pad idles up to the slot; idle-gap sites go via fillIdle.
+    for (const g of followGhosts.filter(g => g.rank === r)) {
       const op = sim.byId.get(g.id);
-      const el = renderItem({ id: g.id, start: g.start, dur: op.dur }, sim, true);
+      const el = renderItem({ id: g.id, start: g.t, dur: op.dur }, sim, true);
       el.classList.add('ghost', 'follow');
-      el.title = `${E.label(op)} just became ready — click to place it here (t=${g.start}) and follow the microbatch`;
+      el.title = `${E.label(op)} is ready — click to place it here (t=${g.t})` +
+        (g.mode === 'idle' ? ', filling the idle gap' : '');
       el.style.cursor = 'pointer';
       el.onclick = ev => {
         ev.stopPropagation();
-        const pad = Array.from({ length: g.start - sim.frontier[r] }, () => ({ rank: r, type: 'idle' }));
+        if (g.mode === 'idle') { fillIdle(r, g.t, g.id); return; }
+        const pad = Array.from({ length: g.t - sim.frontier[r] }, () => ({ rank: r, type: 'idle' }));
         tryActions([...pad, { rank: r, type: 'op', id: g.id }]);
       };
       lane.appendChild(el);
