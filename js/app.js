@@ -290,6 +290,39 @@ function renderEditChrome() {
     $(id).disabled = true;
 }
 
+function buildAxis(horizon) {
+  const axis = document.createElement('div');
+  axis.className = 'timeaxis';
+  for (let t = 0; t < horizon; t++) {
+    const s = document.createElement('span');
+    if (t % 2 === 0) s.textContent = t;
+    axis.appendChild(s);
+  }
+  return axis;
+}
+
+// Position the (already-filled) popover near the pointer, clamped to viewport.
+function placePopover(ev) {
+  const pop = $('popover');
+  pop.style.display = '';
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(ev.clientX - 24, innerWidth - pw - 8)) + 'px';
+  pop.style.top = Math.max(8, Math.min(ev.clientY + 14, innerHeight - ph - 8)) + 'px';
+}
+
+// One op button, styled by the current theme.
+function opButton(op, { notReady = false, onPick }) {
+  const btn = document.createElement('button');
+  btn.className = 'opbtn' + (notReady ? ' notready' : '');
+  btn.dataset.opid = op.id;
+  const st = cellStyle(state.theme, state.mode, op, state.sim.cfg);
+  btn.style.background = st.bg; btn.style.borderColor = st.border; btn.style.color = st.ink;
+  btn.innerHTML = `<span class="stg">${op.stage}</span>${op.kind}${op.mb}`;
+  btn.title = opTitle(op, state.sim);
+  btn.onclick = () => onPick(op);
+  return btn;
+}
+
 function opTitle(op, sim) {
   const deps = E.depsOf(sim.cfg, op).map(d => {
     const dop = sim.byId.get(d);
@@ -307,14 +340,7 @@ function renderGrid() {
   const horizon = Math.max(...sim.frontier, state.ref.score.makespan,
     ...(state.hoverGhost ? state.hoverGhost.map(g => g.end) : [])) + 4;
 
-  const axis = document.createElement('div');
-  axis.className = 'timeaxis';
-  for (let t = 0; t < horizon; t++) {
-    const s = document.createElement('span');
-    if (t % 2 === 0) s.textContent = t;
-    axis.appendChild(s);
-  }
-  grid.appendChild(axis);
+  grid.appendChild(buildAxis(horizon));
 
   const critSet = state.showCrit && E.isDone(sim)
     ? new Set(E.criticalPath(sim).ids) : null;
@@ -457,27 +483,20 @@ function openIdlePopover(r, t, ev) {
   const sim = state.sim;
   pop.innerHTML = '';
   const pending = E.pendingOps(sim, r);
-  if (!pending.length) { pop.innerHTML = '<span class="hint">Rank finished ✓</span>'; }
+  if (!pending.length) pop.innerHTML = '<span class="hint">Rank finished ✓</span>';
   const group = document.createElement('div');
   group.className = 'kindgroup';
   for (const op of pending.sort((a, b) =>
       (a.kind > b.kind ? 1 : a.kind < b.kind ? -1 : 0) || a.mb - b.mb || a.stage - b.stage)) {
-    const ready = !E.blockReason(sim, op, t) ||
-      E.blockReason(sim, op, t).code === 'memory'; // memory depends on order; let replay judge
-    const btn = document.createElement('button');
-    btn.className = 'opbtn' + (state.assist !== 'none' && !ready ? ' notready' : '');
-    const st = cellStyle(state.theme, state.mode, op, sim.cfg);
-    btn.style.background = st.bg; btn.style.borderColor = st.border; btn.style.color = st.ink;
-    btn.innerHTML = `<span class="stg">${op.stage}</span>${op.kind}${op.mb}`;
-    btn.title = opTitle(op, sim);
-    btn.onclick = () => { closePopover(); fillIdle(r, t, op.id); };
-    group.appendChild(btn);
+    const block = E.blockReason(sim, op, t);
+    const ready = !block || block.code === 'memory'; // memory depends on order; let replay judge
+    group.appendChild(opButton(op, {
+      notReady: state.assist !== 'none' && !ready,
+      onPick: o => { closePopover(); fillIdle(r, t, o.id); },
+    }));
   }
   pop.appendChild(group);
-  pop.style.display = '';
-  const pw = pop.offsetWidth, ph = pop.offsetHeight;
-  pop.style.left = Math.max(8, Math.min(ev.clientX - 24, innerWidth - pw - 8)) + 'px';
-  pop.style.top = Math.max(8, Math.min(ev.clientY + 14, innerHeight - ph - 8)) + 'px';
+  placePopover(ev);
 }
 
 // --- free-edit mode -----------------------------------------------------------
@@ -552,15 +571,7 @@ function renderEditGrid() {
   const badIds = new Set(viol.map(v => v.id));
   const horizon = Math.max(state.ref.score.makespan,
     ...[...plan.entries()].map(([id, s]) => s + sim.byId.get(id).dur), 10) + 6;
-
-  const axis = document.createElement('div');
-  axis.className = 'timeaxis';
-  for (let t = 0; t < horizon; t++) {
-    const s = document.createElement('span');
-    if (t % 2 === 0) s.textContent = t;
-    axis.appendChild(s);
-  }
-  grid.appendChild(axis);
+  grid.appendChild(buildAxis(horizon));
 
   for (let r = 0; r < cfg.P; r++) {
     const row = document.createElement('div');
@@ -612,12 +623,8 @@ function renderEditGrid() {
     lbl.textContent = `unplaced (${unplaced.length}):`;
     tray.appendChild(lbl);
     for (const op of unplaced.slice(0, 40)) {
-      const btn = document.createElement('button');
-      btn.className = 'opbtn' + (state.lifted === op.id ? ' pulse' : '');
-      const st = cellStyle(state.theme, state.mode, op, cfg);
-      btn.style.background = st.bg; btn.style.borderColor = st.border; btn.style.color = st.ink;
-      btn.innerHTML = `<span class="stg">${op.stage}</span>${op.kind}${op.mb}`;
-      btn.onclick = () => editClickOp(op.id);
+      const btn = opButton(op, { onPick: o => editClickOp(o.id) });
+      if (state.lifted === op.id) btn.classList.add('pulse');
       tray.appendChild(btn);
     }
     if (unplaced.length > 40) tray.append(` …and ${unplaced.length - 40} more`);
@@ -760,17 +767,13 @@ function buildOpButtons(box, r, at = null, compact = false) {
     for (const op of pending.filter(o => o.kind === kind)
                             .sort((a, b) => a.mb - b.mb || a.stage - b.stage)) {
       const ready = !E.blockReason(sim, op, t);
-      const btn = document.createElement('button');
-      btn.className = 'opbtn' + (state.assist !== 'none' && !ready ? ' notready' : '');
-      btn.dataset.opid = op.id;
-      const st = cellStyle(state.theme, state.mode, op, sim.cfg);
-      btn.style.background = st.bg; btn.style.borderColor = st.border; btn.style.color = st.ink;
-      btn.innerHTML = `<span class="stg">${op.stage}</span>${op.kind}${op.mb}`;
-      btn.title = opTitle(op, sim);
-      btn.onclick = () => {
-        closePopover();
-        tryActions([...pad, { rank: r, type: 'op', id: op.id }]);
-      };
+      const btn = opButton(op, {
+        notReady: state.assist !== 'none' && !ready,
+        onPick: o => {
+          closePopover();
+          tryActions([...pad, { rank: r, type: 'op', id: o.id }]);
+        },
+      });
       btn.onmouseenter = () => previewConsequence(op, ready, r, t);
       btn.onmouseleave = () => { $('hint').textContent = ''; state.hoverGhost = null; renderGrid(); };
       group.appendChild(btn);
@@ -820,13 +823,8 @@ function renderPicker() {
 function openPopover(r, t, ev) {
   state.selectedRank = r;
   renderAll();
-  const pop = $('popover');
-  buildOpButtons(pop, r, t, true);   // compact: no kind labels, ops are self-labeled
-  pop.style.display = '';
-  // fixed positioning near the mouse pointer, clamped to the viewport
-  const pw = pop.offsetWidth, ph = pop.offsetHeight;
-  pop.style.left = Math.max(8, Math.min(ev.clientX - 24, innerWidth - pw - 8)) + 'px';
-  pop.style.top = Math.max(8, Math.min(ev.clientY + 14, innerHeight - ph - 8)) + 'px';
+  buildOpButtons($('popover'), r, t, true);  // compact: no kind labels
+  placePopover(ev);
 }
 
 function closePopover() {
@@ -1017,14 +1015,7 @@ function renderCompare() {
   const horizon = Math.max(...state.sim.frontier, ref ? E.score(ref).makespan : 0) + 4;
   const grid = $('comparegrid');
   grid.innerHTML = '';
-  const axis = document.createElement('div');
-  axis.className = 'timeaxis';
-  for (let t = 0; t < horizon; t++) {
-    const s = document.createElement('span');
-    if (t % 2 === 0) s.textContent = t;
-    axis.appendChild(s);
-  }
-  grid.appendChild(axis);
+  grid.appendChild(buildAxis(horizon));
   for (let r = 0; r < ref.cfg.P; r++) {
     const row = document.createElement('div');
     row.className = 'rankrow';
