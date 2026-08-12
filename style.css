@@ -143,9 +143,11 @@ main > div { min-width: 0; }
   opacity: 0.55; z-index: 5; user-select: none;
 }
 .slot:hover, .slot.active { opacity: 1; background: color-mix(in srgb, var(--accent) 12%, transparent); }
-#gridwrap { position: relative; }
+.slot.future { opacity: 0; border-style: dotted; }
+.slot.future:hover { opacity: 0.8; }
+.slot.future:hover::after { content: "+"; }
 .popover {
-  position: absolute; z-index: 30; min-width: 230px; max-width: 460px;
+  position: fixed; z-index: 30; min-width: 230px; max-width: 460px;
   background: var(--surface); border: 1px solid var(--axis); border-radius: 10px;
   padding: 8px 12px; box-shadow: 0 6px 24px rgba(0,0,0,0.22);
 }

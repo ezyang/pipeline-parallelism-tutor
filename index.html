@@ -65,10 +65,10 @@
     <div class="panel" style="margin-top:14px">
       <h2>Schedule</h2>
       <div id="gridwrap"><div id="grid"></div><div id="popover" class="popover" style="display:none"></div></div>
-      <p class="hint">Click the <b>+</b> square at a rank's frontier to place the next op there.
-      Hover an op to trace dependencies (red = it needs, green = it unblocks); click a placed op
-      to <b>rewind</b> to just before it. The thin bars under each lane are activation memory
-      over time. <kbd>↑</kbd><kbd>↓</kbd> select rank, <kbd>i</kbd> = idle.</p>
+      <p class="hint">Click any empty slot to place an op there — gaps before it become idles
+      automatically. Hover an op to trace dependencies (red = it needs, green = it unblocks);
+      click a placed op to <b>rewind</b> to just before it. The thin bars under each lane are
+      activation memory over time. <kbd>↑</kbd><kbd>↓</kbd> select rank, <kbd>i</kbd> = idle.</p>
     </div>
     <div class="panel" style="margin-top:14px">
       <h2 id="pickerTitle">Place</h2>

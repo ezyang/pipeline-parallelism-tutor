@@ -41,7 +41,8 @@ const state = {
   assist: 'ready',         // 'none' | 'ready' | 'coach'
   theme: 'microbatch',
   mode: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
-  redo: [],
+  redo: [],                // stack of action batches
+  batches: [],             // size of each applied batch (for batch undo)
   seenEvents: new Set(),
   hoverGhost: null,
   cleared: false,          // this level's goal met this session
@@ -78,6 +79,7 @@ function loadLevel(level, actions = []) {
   state.sim = E.replay(level.cfg, actions);
   state.ref = E.referenceSchedule(level.cfg);
   state.redo = [];
+  state.batches = actions.map(() => 1);
   state.seenEvents = new Set();
   state.selectedRank = 0;
   state.hoverGhost = null;
@@ -111,12 +113,18 @@ function pct(x) { return (100 * x).toFixed(1) + '%'; }
 
 // --- actions -------------------------------------------------------------------
 
-function tryAction(action, { silent = false } = {}) {
+function tryAction(action, opts) { return tryActions([action], opts); }
+
+// Apply a batch atomically (e.g. auto-padded idles + the chosen op): validate
+// on a replay first so a failure commits nothing. Undo pops whole batches.
+function tryActions(actions, { silent = false } = {}) {
   try {
-    E.apply(state.sim, action);
+    const test = E.replay(state.sim.cfg, [...state.sim.actions, ...actions]);
+    state.sim = test;
+    state.batches.push(actions.length);
     state.redo = [];
     setStatus('');
-    afterChange(action, silent);
+    afterChange(actions[actions.length - 1], silent);
     return true;
   } catch (err) {
     setStatus(err.message, 'err');
@@ -171,16 +179,20 @@ function afterChange(action, silent) {
 function undo() {
   const acts = state.sim.actions;
   if (!acts.length) return;
-  state.redo.push(acts[acts.length - 1]);
-  state.sim = E.replay(state.level.cfg, acts.slice(0, -1));
+  const n = state.batches.pop() ?? 1;
+  state.redo.push(acts.slice(acts.length - n));
+  state.sim = E.replay(state.level.cfg, acts.slice(0, acts.length - n));
   hideBanner(); setStatus('');
   autoAdvanceSelection();
   saveHash(); renderAll();
 }
 
 function redo() {
-  const a = state.redo.pop();
-  if (a) { E.apply(state.sim, a); autoAdvanceSelection(); saveHash(); renderAll(); }
+  const batch = state.redo.pop();
+  if (!batch) return;
+  for (const a of batch) E.apply(state.sim, a);
+  state.batches.push(batch.length);
+  autoAdvanceSelection(); saveHash(); renderAll();
 }
 
 function autoStep() {
@@ -194,7 +206,9 @@ function autoStep() {
 }
 
 function autoRunUntilStrange() {
+  const before = state.sim.actions.length;
   const res = E.autoRun(state.sim, state.level.policy, state.seenEvents);
+  if (state.sim.actions.length > before) state.batches.push(state.sim.actions.length - before);
   state.redo = [];
   if (res.stopped === 'event') {
     setStatus(`⏸ ${res.event.msg}` +
@@ -211,7 +225,9 @@ function autoRunUntilStrange() {
 }
 
 function projectRest() {
+  const before = state.sim.actions.length;
   const res = E.project(state.sim, state.level.policy);
+  if (state.sim.actions.length > before) state.batches.push(state.sim.actions.length - before);
   state.redo = [];
   if (res.deadlock) setStatus('💀 Projection hit a deadlock — this prefix cannot be completed by the policy.', 'err');
   else afterChange(null, true);
@@ -273,16 +289,23 @@ function renderGrid() {
         lane.appendChild(el);
       }
     }
-    // clickable "next slot" square at the frontier
+    // clickable slots from the frontier onward; clicking a later one
+    // auto-pads the gap with idles
     if (E.pendingOps(sim, r).length) {
-      const slot = document.createElement('div');
-      slot.className = 'slot' + (r === state.selectedRank ? ' active' : '');
-      slot.dataset.rank = r;
-      slot.style.left = (sim.frontier[r] * CELL + 1) + 'px';
-      slot.textContent = '+';
-      slot.title = `place something at rank ${r}, t=${sim.frontier[r]}`;
-      slot.onclick = ev => { ev.stopPropagation(); openPopover(r, slot); };
-      lane.appendChild(slot);
+      const f = sim.frontier[r];
+      for (let t = f; t < horizon - 1; t++) {
+        const slot = document.createElement('div');
+        slot.className = 'slot' + (t === f ? (r === state.selectedRank ? ' active' : '') : ' future');
+        slot.dataset.rank = r;
+        slot.dataset.t = t;
+        slot.style.left = (t * CELL + 1) + 'px';
+        if (t === f) slot.textContent = '+';
+        slot.title = t === f
+          ? `place something at rank ${r}, t=${t}`
+          : `place at rank ${r}, t=${t} (idles the ${t - f} slot(s) before it)`;
+        slot.onclick = ev => { ev.stopPropagation(); openPopover(r, t, ev); };
+        lane.appendChild(slot);
+      }
     }
     lane.onclick = () => { closePopover(); state.selectedRank = r; renderAll(); };
     row.appendChild(lane);
@@ -331,8 +354,9 @@ function rewindTo(opId) {
   const i = acts.findIndex(a => a.type === 'op' && a.id === opId);
   if (i < 0) return;
   const removed = acts.slice(i);
-  state.redo = removed.slice().reverse().concat(state.redo);
+  state.redo = removed.map(a => [a]).reverse().concat(state.redo);
   state.sim = E.replay(state.level.cfg, acts.slice(0, i));
+  state.batches = acts.slice(0, i).map(() => 1);
   hideBanner();
   setStatus(`Rewound ${removed.length} placement(s) — redo restores them in order.`);
   autoAdvanceSelection();
@@ -378,10 +402,13 @@ function clearTrace() {
 }
 
 // Build op buttons for a rank into `box`. Used by both the picker panel and
-// the click-a-slot popover.
-function buildOpButtons(box, r) {
+// the click-a-slot popover. `at` targets a slot at/after the frontier;
+// clicking an op auto-pads the gap with idles (committed atomically).
+function buildOpButtons(box, r, at = null) {
   const sim = state.sim;
-  const t = sim.frontier[r];
+  const f = sim.frontier[r];
+  const t = at ?? f;
+  const pad = Array.from({ length: t - f }, () => ({ rank: r, type: 'idle' }));
   box.innerHTML = '';
   const pending = E.pendingOps(sim, r);
   if (!pending.length) {
@@ -410,26 +437,32 @@ function buildOpButtons(box, r) {
       btn.style.background = st.bg; btn.style.borderColor = st.border; btn.style.color = st.ink;
       btn.innerHTML = `<span class="stg">${op.stage}</span>${op.kind}${op.mb}`;
       btn.title = opTitle(op, sim);
-      btn.onclick = () => { closePopover(); tryAction({ rank: r, type: 'op', id: op.id }); };
-      btn.onmouseenter = () => previewConsequence(op, ready, r);
+      btn.onclick = () => {
+        closePopover();
+        tryActions([...pad, { rank: r, type: 'op', id: op.id }]);
+      };
+      btn.onmouseenter = () => previewConsequence(op, ready, r, t);
       btn.onmouseleave = () => { $('hint').textContent = ''; state.hoverGhost = null; renderGrid(); };
       group.appendChild(btn);
     }
     box.appendChild(group);
   }
-  const wgroup = document.createElement('div');
-  wgroup.className = 'kindgroup';
-  const wlbl = document.createElement('span');
-  wlbl.className = 'kindlabel';
-  wlbl.textContent = 'wait';
-  wgroup.appendChild(wlbl);
-  const idle = document.createElement('button');
-  idle.className = 'opbtn';
-  idle.textContent = '⏸ idle';
-  idle.title = 'Leave this slot empty. Sometimes waiting is the right move!';
-  idle.onclick = () => { closePopover(); tryAction({ rank: r, type: 'idle' }); };
-  wgroup.appendChild(idle);
-  box.appendChild(wgroup);
+  // explicit idle only in the frontier picker; slot-clicking pads automatically
+  if (at === null) {
+    const wgroup = document.createElement('div');
+    wgroup.className = 'kindgroup';
+    const wlbl = document.createElement('span');
+    wlbl.className = 'kindlabel';
+    wlbl.textContent = 'wait';
+    wgroup.appendChild(wlbl);
+    const idle = document.createElement('button');
+    idle.className = 'opbtn';
+    idle.textContent = '⏸ idle';
+    idle.title = 'Leave this slot empty — or just click a later slot directly.';
+    idle.onclick = () => { closePopover(); tryAction({ rank: r, type: 'idle' }); };
+    wgroup.appendChild(idle);
+    box.appendChild(wgroup);
+  }
 }
 
 function renderPicker() {
@@ -454,18 +487,16 @@ function renderPicker() {
 
 // --- popover: click the next-slot square, pick what goes there ---------------
 
-function openPopover(r, anchorEl) {
+function openPopover(r, t, ev) {
   state.selectedRank = r;
-  renderAll();          // rebuilds grid; anchor is recreated, so find it again
+  renderAll();
   const pop = $('popover');
-  const anchor = document.querySelector(`#grid .slot[data-rank="${r}"]`);
-  if (!anchor) return;
-  buildOpButtons(pop, r);
+  buildOpButtons(pop, r, t);
   pop.style.display = '';
-  const wrap = $('gridwrap').getBoundingClientRect();
-  const a = anchor.getBoundingClientRect();
-  pop.style.left = Math.max(0, a.left - wrap.left + $('gridwrap').scrollLeft) + 'px';
-  pop.style.top = (a.bottom - wrap.top + 6) + 'px';
+  // fixed positioning near the mouse pointer, clamped to the viewport
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(ev.clientX - 24, innerWidth - pw - 8)) + 'px';
+  pop.style.top = Math.max(8, Math.min(ev.clientY + 14, innerHeight - ph - 8)) + 'px';
 }
 
 function closePopover() {
@@ -491,19 +522,21 @@ function showHint() {
   });
 }
 
-function previewConsequence(op, ready, r = state.selectedRank) {
+function previewConsequence(op, ready, r = state.selectedRank, t = null) {
   const sim = state.sim;
+  const at = t ?? sim.frontier[r];
   if (!ready) {
-    const block = E.blockReason(sim, op, sim.frontier[r]);
+    const block = E.blockReason(sim, op, at);
     $('hint').textContent = `${E.label(op)}: ${block.msg}`;
     if (block.dep) highlightDep(block.dep);
     return;
   }
   if (state.assist === 'none') return;
+  const pad = Array.from({ length: at - sim.frontier[r] }, () => ({ rank: r, type: 'idle' }));
   try {
     const base = E.replay(sim.cfg, sim.actions);
     E.project(base, state.level.policy);
-    const withOp = E.replay(sim.cfg, [...sim.actions, { rank: r, type: 'op', id: op.id }]);
+    const withOp = E.replay(sim.cfg, [...sim.actions, ...pad, { rank: r, type: 'op', id: op.id }]);
     const placedBefore = new Set(sim.placed.keys());
     E.project(withOp, state.level.policy);
     const dm = E.score(withOp).makespan - E.score(base).makespan;
@@ -690,6 +723,8 @@ function init() {
     if (!$('popover').contains(e.target) && !e.target.classList?.contains('slot'))
       closePopover();
   });
+  $('gridwrap').addEventListener('scroll', closePopover);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closePopover(); });
 
   const tsel = $('themesel');
   for (const [k, t] of Object.entries(THEMES)) {
