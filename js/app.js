@@ -85,7 +85,8 @@ function readCustomCfg() {
   const capRaw = $('cfgCap').value.trim();
   const cap = capRaw === '' ? null : Math.max(1, +capRaw);
   const warmup = $('cfgWarmup').checked ? 'zb2' : undefined;
-  return { P, V, M, model, cap, ...(warmup ? { warmup } : {}) };
+  const place = $('cfgPlace').value || undefined;
+  return { P, V, M, model, cap, ...(warmup ? { warmup } : {}), ...(place ? { place } : {}) };
 }
 
 function loadLevel(level, actions = []) {
@@ -1290,7 +1291,7 @@ function saveHash() {
   let h = `level=${state.level.key}`;
   if (state.level.key === 'custom') {
     const c = state.level.cfg;
-    h += `&cfg=${c.P}.${c.V}.${c.M}.${c.model}.${c.cap ?? 'x'}.${c.warmup ?? 'std'}`;
+    h += `&cfg=${c.P}.${c.V}.${c.M}.${c.model}.${c.cap ?? 'x'}.${c.warmup ?? 'std'}.${c.place ?? 'auto'}`;
   }
   if (acts) h += '&a=' + acts;
   history.replaceState(null, '', '#' + h);
@@ -1300,9 +1301,11 @@ function loadHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   let level;
   if (p.get('level') === 'custom' && p.get('cfg')) {
-    const [P, V, M, model, cap, warmup] = p.get('cfg').split('.');
+    const [P, V, M, model, cap, warmup, place] = p.get('cfg').split('.');
     level = customLevel({ P: +P, V: +V, M: +M, model,
-      cap: cap === 'x' ? null : +cap, ...(warmup === 'zb2' ? { warmup: 'zb2' } : {}) });
+      cap: cap === 'x' ? null : +cap,
+      ...(warmup === 'zb2' ? { warmup: 'zb2' } : {}),
+      ...(place && place !== 'auto' ? { place } : {}) });
   } else {
     level = levelByKey(p.get('level') || LEVELS[0].key);
   }

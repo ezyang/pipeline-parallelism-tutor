@@ -22,14 +22,28 @@ export function numStages(cfg) {
   return cfg.P * cfg.V;
 }
 
-// Interleaved placement: rank r hosts stages r, r+P, r+2P, ...
+// Stage->rank placement.
+//   'wrap' (Megatron interleaved): rank r hosts stages r, r+P, r+2P, ...
+//   'v' (ZB-V / DualPipe style): odd chunks run in REVERSE rank order, so the
+//     last stage of one chunk and the first of the next share a rank — the
+//     microbatch's path bounces off the ends (a "V"), avoiding the comm hop
+//     at each turn. Default for V>1.
+export function placement(cfg) {
+  return cfg.place ?? (cfg.V > 1 ? 'v' : 'wrap');
+}
+
 export function stageRank(cfg, stage) {
-  return stage % cfg.P;
+  const P = cfg.P;
+  if (placement(cfg) === 'v') {
+    const chunk = Math.floor(stage / P), pos = stage % P;
+    return chunk % 2 === 0 ? pos : P - 1 - pos;
+  }
+  return stage % P;
 }
 
 export function rankStages(cfg, rank) {
   const out = [];
-  for (let s = rank; s < numStages(cfg); s += cfg.P) out.push(s);
+  for (let s = 0; s < numStages(cfg); s++) if (stageRank(cfg, s) === rank) out.push(s);
   return out;
 }
 
@@ -225,6 +239,9 @@ export function warmupQuota(cfg, rank) {
   if (cfg.warmup === 'zb2')
     return Math.min(2 * (cfg.P - rank) - 1, cfg.M * cfg.V);
   if (cfg.V === 1) return cfg.P - rank;
+  // V-placement: no closed-form Megatron quota; depth-first under the cap
+  // works well, so the quota is just the cap (i.e. effectively ungated).
+  if (placement(cfg) === 'v') return cfg.cap ?? cfg.M * cfg.V;
   const q = (cfg.P - rank - 1) * 2 + (cfg.V - 1) * cfg.P + 1;
   return Math.min(q, cfg.M * cfg.V);
 }
@@ -240,17 +257,20 @@ export function rankCandidates(state, rank, policyKey, relaxQuota = false) {
     cands = cands.filter(o => o.kind !== 'F' || state.fbDepth[rank] < q);
   }
   // priority: kind class, then position in the microbatch stream. With V=1
-  // that's just microbatch order. With V>1, follow Megatron's interleaved
-  // order: microbatches move in groups of P per chunk (F0..F3 on chunk 0,
-  // then F0..F3 on chunk 1, then F4..F7 on chunk 0, ...), so the stream key
-  // is (mb group, chunk, mb).
+  // that's just microbatch order. With V>1 under 'wrap' placement, follow
+  // Megatron's interleaved order: microbatches move in groups of P per chunk,
+  // stream key (mb group, chunk, mb). Under 'v' placement the chunks bounce
+  // off the pipe ends, so plain depth-first (mb, then stage along the path)
+  // is both natural and faster — the turns continue on the same rank.
   const P = state.cfg.P;
   const S = numStages(state.cfg);
   // forwards climb stages 0..S-1; backwards descend S-1..0
-  const key = o => {
-    const st = o.kind === 'F' ? o.stage : S - 1 - o.stage;
-    return (Math.floor(o.mb / P) * S + st) * P + (o.mb % P);
-  };
+  const key = placement(state.cfg) === 'v'
+    ? o => o.mb * S + (o.kind === 'F' ? o.stage : S - 1 - o.stage)
+    : o => {
+        const st = o.kind === 'F' ? o.stage : S - 1 - o.stage;
+        return (Math.floor(o.mb / P) * S + st) * P + (o.mb % P);
+      };
   cands.sort((a, b) =>
     (order[a.kind] - order[b.kind]) || (key(a) - key(b)));
   const tie = cands.length >= 2 &&
@@ -871,8 +891,13 @@ export function recognizeSchedule(state) {
   };
   if (!zb) {
     push('GPipe', 'all forwards, then all backwards (Huang et al. 2019)', 'gpipe');
-    push(cfg.V > 1 ? 'Interleaved 1F1B (Megatron VPP)' : '1F1B',
-      cfg.V > 1 ? 'Narayanan et al. 2021 — interleaved stages' : 'one-forward-one-backward (PipeDream-Flush / Megatron)',
+    const vppName = placement(cfg) === 'v'
+      ? 'V-shape interleaved 1F1B' : 'Interleaved 1F1B (Megatron VPP)';
+    const vppNote = placement(cfg) === 'v'
+      ? 'chunks bounce off the pipe ends (ZB-V / DualPipe-style placement)'
+      : 'Narayanan et al. 2021 — interleaved stages';
+    push(cfg.V > 1 ? vppName : '1F1B',
+      cfg.V > 1 ? vppNote : 'one-forward-one-backward (PipeDream-Flush / Megatron)',
       '1f1b');
     push('1F1B (eager warmup)', '1F1B order but admitting forwards greedily in warmup', '1f1b-eager');
   } else {

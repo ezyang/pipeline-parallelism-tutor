@@ -62,6 +62,13 @@
       <option value="zb">split F/B/W</option>
     </select>
   </label>
+  <label class="ctl">placement
+    <select id="cfgPlace">
+      <option value="">auto (V-shape when VPP)</option>
+      <option value="wrap">wrap (Megatron: r, r+P, …)</option>
+      <option value="v">V-shape (bounce off ends)</option>
+    </select>
+  </label>
   <label class="ctl">mem cap <input type="number" id="cfgCap" value="4" min="1" placeholder="∞"></label>
   <label class="ctl"><input type="checkbox" id="cfgWarmup"> deep warmup (ZB-H2)</label>
   <button id="cfgapply" class="primary">apply</button>

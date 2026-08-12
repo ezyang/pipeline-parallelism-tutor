@@ -257,3 +257,20 @@ test('building block: too-eager block violates the cap when stamped', () => {
   const res = E.stampBlock(s, 0);
   assert.ok(res.violations?.some(v => v.msg.includes('memory') || v.code === 'memory'));
 });
+
+test('V placement: chunks bounce off ends; depth-first reference beats wrap', () => {
+  const v = { P: 4, V: 2, M: 8, model: '11', cap: 8 };          // 'v' by default
+  const wrap = { ...v, place: 'wrap' };
+  assert.deepStrictEqual([0,1,2,3].map(r => E.rankStages(v, r).join(',')),
+    ['0,7', '1,6', '2,5', '3,4']);
+  assert.deepStrictEqual([0,1,2,3].map(r => E.rankStages(wrap, r).join(',')),
+    ['0,4', '1,5', '2,6', '3,7']);
+  const rv = E.referenceSchedule(v);
+  const rw = E.referenceSchedule(wrap);
+  assert.ok(rv.done && rw.done);
+  assert.ok(rv.score.makespan < rw.score.makespan,
+    `v ${rv.score.makespan} should beat wrap ${rw.score.makespan}`);
+  // V=1 unaffected by the default
+  const flat = E.referenceSchedule({ P: 4, V: 1, M: 8, model: '11', cap: 4 });
+  assert.strictEqual(flat.score.makespan, 22);
+});

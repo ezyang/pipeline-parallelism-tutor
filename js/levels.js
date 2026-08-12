@@ -80,15 +80,16 @@ clicks; if it was too eager, the stamp will name the constraint it breaks.`,
     cfg: { P: 4, V: 2, M: 8, model: '11', cap: 8 },
     policy: '1f1b',
     goal: 'par',
-    blurb: `Each rank now hosts two chunks: rank 0 has stages 0 and 4, etc.
-A microbatch visits your rank twice up and twice down (the superscript is
-the stage). 128 ops — lean on your tools. Try block-stamping first: designing
-a block that tiles at all is a real puzzle here (each rank's ops must land on
-distinct time-residues mod w=4). But notice the best uniform stamp is SLOWER
-than par: Megatron's interleaved schedule moves microbatches in groups of P
-rather than at uniform offsets, which is exactly why it beats naive
-repetition. Stamp to get a legal baseline, then study the reference (⇵) to
-see the group trick — or run-until-strange and steer at the choice points.`,
+    blurb: `Each rank now hosts two chunks, placed in a "V": chunk 0 runs
+down ranks 0→3, chunk 1 runs back UP 3→0. So rank 0 has stages 0 and 7,
+and rank 3 has 3 and 4 — a microbatch bounces off the pipe ends, and at
+each bounce the next stage is on the SAME rank (no communication hop).
+This is the placement ZB-V and DualPipe use. Follow microbatch 0's ghosts
+and watch the V shape draw itself; the depth-first chase you already know
+is near-optimal here. 128 ops — block-stamp a single microbatch (a real
+tiling puzzle: each rank's ops must land on distinct residues mod w=4), or
+run-until-strange and steer. Sandbox offers the classic Megatron "wrap"
+placement for comparison — the V beats it here (38 vs 43).`,
   },
   {
     key: 'b-twice-f',
