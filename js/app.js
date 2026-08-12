@@ -915,6 +915,10 @@ function renderStats() {
       <tr><td>par bubble</td><td>${pct(state.ref.score.bubble)}</td></tr>
       <tr><td title="idle between each rank's own first and last op — ignores the unavoidable fill/drain stagger">internal bubble</td>
           <td>${pct(s.internalBubble)} <span style="color:var(--muted)">(par ${pct(state.ref.score.internalBubble)})</span></td></tr>
+      ${(() => {
+        const sol = store.solution(state.level.key);
+        return sol ? `<tr><td>your best</td><td>${sol.makespan}</td></tr>` : '';
+      })()}
     </table>`;
 }
 
@@ -947,7 +951,8 @@ function renderChrome() {
   LEVELS.forEach((l, i) => {
     const o = document.createElement('option');
     o.value = l.key;
-    o.textContent = levelPlayable(i) ? l.name : `🔒 ${l.name}`;
+    const mark = store.solution(l.key) ? ' ✓' : '';
+    o.textContent = levelPlayable(i) ? l.name + mark : `🔒 ${l.name}`;
     o.disabled = !levelPlayable(i);
     lsel.appendChild(o);
   });
@@ -1227,6 +1232,14 @@ function init() {
   $('critbtn').onclick = toggleCrit;
   $('comparebtn').onclick = toggleCompare;
   $('playbtn').onclick = togglePlayback;
+  $('sharebtn').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(location.href);
+      setStatus('🔗 Link copied — it reproduces this exact position, including partial schedules.');
+    } catch {
+      setStatus(`Copy this link: ${location.href}`);
+    }
+  };
 
   document.addEventListener('keydown', e => {
     if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
