@@ -97,19 +97,19 @@ gaps are, then try designing a block with those gaps built in.`,
   {
     key: 'ragged',
     name: '7. Ragged rounds (M % P ≠ 0)',
-    cfg: { P: 4, V: 2, M: 10, model: '11', cap: 8, place: 'wrap' },
+    cfg: { P: 3, V: 2, M: 4, model: '11', cap: 6, place: 'wrap' },
     policy: '1f1b',
     goal: 'par',
-    blurb: `Ten microbatches, four ranks: it doesn't divide. Interleaved
-schedules move microbatches in "rounds", and the naive grouping is
-4 + 4 + 2 — that last undersized round is a straggler that drags a
-half-empty wave through every chunk. The fix is bookkeeping, not physics:
-balance the rounds as 5 + 5 (rounds = ⌊M/P⌋, size = ⌈M/rounds⌉), so the
-two leftover microbatches ride inside full waves instead of forming their
-own. Par uses balanced rounds; watch the wavefront — each round is a BAND
-of 5 microbatches sweeping the pipe, wider than the pipe itself, and the
-warmup quota grows with round size ((P−r−1)·2 + (V−1)·5 + 1). Wrap
-placement here, because rounds are a wrap-schedule concept.`,
+    blurb: `Four microbatches, three ranks: it doesn't divide. Interleaved
+schedules move microbatches in "rounds", and the naive grouping is 3 + 1 —
+that last undersized round is a straggler that drags a nearly-empty wave
+through every chunk (makespan 24). The fix is bookkeeping, not physics:
+balance it into ONE round of 4 (rounds = ⌊M/P⌋, size = ⌈M/rounds⌉), so the
+leftover microbatch rides inside a full wave instead of forming its own
+(makespan 22 — that's par). A round is a BAND of microbatches sweeping the
+pipe, wider than the pipe itself; the warmup quota grows with round size
+((P−r−1)·2 + (V−1)·G + 1). Wrap placement here, because rounds are a
+wrap-schedule concept.`,
   },
   {
     key: 'b-twice-f',

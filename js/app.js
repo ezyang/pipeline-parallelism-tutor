@@ -60,6 +60,8 @@ const state = {
   lifted: null,            // op id currently picked up (edit mode)
   strandMb: null,          // microbatch strand selected for shifting (edit mode)
   seenEvents: new Set(),
+  manualStreak: 0,         // consecutive hand placements a dblclick-chase would have made
+  nudged: false,           // one nudge per level
   hoverGhost: null,
   cleared: false,          // this level's goal met this session
 };
@@ -102,6 +104,8 @@ function loadLevel(level, actions = []) {
   state.selectedRank = 0;
   state.hoverGhost = null;
   state.cleared = false;
+  state.manualStreak = 0;
+  state.nudged = false;
   state.editing = false;
   state.plan = null;
   state.showCrit = false;
@@ -211,25 +215,34 @@ function autoAdvanceSelection() {
   if (pick !== null) state.selectedRank = pick;
 }
 
-// Earliest place `op` can actually go: at/after the frontier, or inside an
-// existing run of >= dur idle slots (filled via fillIdle). Null if neither.
+// Earliest LEGAL place `op` can go: at/after the frontier, or inside an
+// existing run of >= dur idle slots (filled via fillIdle). If the earliest
+// spot violates a constraint (e.g. the memory cap), keep shoving right —
+// later idle gaps, then later frontier slots — rather than giving up.
 function earliestSite(sim, op) {
   const ready = E.earliestStart(sim, op);
   if (ready === Infinity) return null;
   const r = op.rank;
-  let best = Math.max(ready, sim.frontier[r]);   // frontier placement
-  let mode = 'frontier';
-  // idle-gap placement: find earliest run of op.dur consecutive idles >= ready
-  const idles = sim.rows[r].filter(it => !it.id).map(it => it.start);
+  const legalAt = t => {
+    const plan = new Map([...sim.placed.entries()].map(([id, p]) => [id, p.start]));
+    plan.set(op.id, t);
+    return E.planViolations(sim.cfg, plan).length === 0;
+  };
+  // candidate sites in time order: idle-gap runs, then frontier and beyond
+  const idles = sim.rows[r].filter(it => !it.id).map(it => it.start).sort((a, b) => a - b);
   const idleSet = new Set(idles);
-  for (const t of idles.sort((a, b) => a - b)) {
+  const sites = [];
+  for (const t of idles) {
     if (t < ready) continue;
-    if (t >= best) break;
     let fits = true;
     for (let d = 1; d < op.dur; d++) if (!idleSet.has(t + d)) { fits = false; break; }
-    if (fits) { best = t; mode = 'idle'; break; }
+    if (fits) sites.push({ t, mode: 'idle' });
   }
-  return { t: best, mode };
+  const f = Math.max(ready, sim.frontier[r]);
+  for (let k = 0; k < 64; k++) sites.push({ t: f + k, mode: 'frontier' });
+  sites.sort((a, b) => a.t - b.t);
+  for (const s of sites) if (legalAt(s.t)) return s;
+  return null;
 }
 
 // All current proposals, derived from state (so they persist across
@@ -249,44 +262,78 @@ function computeFollowGhosts(sim) {
     const prevMb = op.mb > 0 && sim.placed.has(E.opId(op.kind, op.stage, op.mb - 1));
     const seed = deps.length === 0 && op.mb === 0;   // F0 of stage 0: the opening move
     if (!chainCont && !prevMb && !seed) continue;
-    const site = earliestSite(sim, op);
-    if (!site) continue;
-    // never propose an illegal placement: check the hypothetical plan
-    // (catches memory-cap violations that dep-based earliestStart can't see)
-    const plan = new Map([...sim.placed.entries()].map(([id, p]) => [id, p.start]));
-    plan.set(op.id, site.t);
-    if (E.planViolations(sim.cfg, plan).length) continue;
-    out.push({ id: op.id, rank: op.rank, ...site });
+    const site = earliestSite(sim, op);   // legality-checked, shoves right if needed
+    if (site) out.push({ id: op.id, rank: op.rank, ...site });
   }
   return out;
 }
 
 // Accept one ghost proposal (shared by click and the chase loop).
+// `lastGhostPlace` lets the second click of a double-click find its target
+// even though the ghost element was replaced by the real op after click one.
+let lastGhostPlace = { id: null, at: 0 };
+let chasing = false;
 function acceptGhost(g) {
   const sim = state.sim;
-  if (g.mode === 'idle') { fillIdle(g.rank, g.t, g.id); return; }
-  const pad = Array.from({ length: g.t - sim.frontier[g.rank] }, () => ({ rank: g.rank, type: 'idle' }));
-  tryActions([...pad, { rank: g.rank, type: 'op', id: g.id }]);
+  lastGhostPlace = { id: g.id, at: performance.now() };
+  // nudge bookkeeping: single-clicking the very ghost the chase would pick
+  // next is manual work automation would do — count a streak, hint at three
+  // (computed before placing, announced after so the status line survives)
+  let nudgeMb = null;
+  if (!chasing) {
+    const op = sim.byId.get(g.id);
+    const skipW = sim.cfg.model === 'zb';
+    const auto = computeFollowGhosts(sim)
+      .filter(x => sim.byId.get(x.id).mb === op.mb)
+      .filter(x => !(skipW && sim.byId.get(x.id).kind === 'W'))
+      .sort((a, b) => a.t - b.t)[0];
+    state.manualStreak = (auto && auto.id === g.id) ? state.manualStreak + 1 : 0;
+    nudgeMb = op.mb;
+  }
+  if (g.mode === 'idle') fillIdle(g.rank, g.t, g.id);
+  else {
+    const pad = Array.from({ length: g.t - sim.frontier[g.rank] }, () => ({ rank: g.rank, type: 'idle' }));
+    tryActions([...pad, { rank: g.rank, type: 'op', id: g.id }]);
+  }
+  if (nudgeMb !== null) maybeNudge(nudgeMb);
+}
+
+function maybeNudge(mb) {
+  if (state.nudged || state.manualStreak < 3) return;
+  state.nudged = true;
+  setStatus(`💡 Tip: you've placed 3 moves the greedy chase would have made — ` +
+    `double-click a ghost (or a placed op) to finish microbatch ${mb} in one go.`);
 }
 
 // Greedily finish microbatch `mb`: keep accepting its ghost proposals until
 // none remain (its ops land at their earliest legal sites, one at a time).
+// In the split-grad model, W ops are skipped: W is deliberate filler — WHERE
+// to spend it is the whole zero-bubble puzzle, so the chase leaves it to you.
 function chaseMicrobatch(mb) {
+  const skipW = state.sim.cfg.model === 'zb';
   let placed = 0;
+  chasing = true;
   for (let guard = 0; guard < 512; guard++) {
     const ghosts = computeFollowGhosts(state.sim)
       .filter(g => state.sim.byId.get(g.id).mb === mb)
+      .filter(g => !(skipW && state.sim.byId.get(g.id).kind === 'W'))
       .sort((a, b) => a.t - b.t);
     if (!ghosts.length) break;
-    const before = state.sim.actions.length;
-    acceptGhost(ghosts[0]);
-    if (state.sim.actions.length === before) break;   // placement failed; stop
+    const before = state.sim.placed.size;   // NOT actions.length — fillIdle
+    acceptGhost(ghosts[0]);                 // swaps an idle for an op in place
+    if (state.sim.placed.size === before) break;   // placement failed; stop
     placed++;
   }
+  chasing = false;
+  state.manualStreak = 0;
   if (placed) {
-    const left = state.sim.ops.filter(o => o.mb === mb && !state.sim.placed.has(o.id)).length;
+    const leftW = skipW
+      ? state.sim.ops.filter(o => o.mb === mb && o.kind === 'W' && !state.sim.placed.has(o.id)).length : 0;
+    const left = state.sim.ops.filter(o => o.mb === mb && !state.sim.placed.has(o.id)).length - leftW;
     setStatus(`Chased microbatch ${mb}: placed ${placed} op(s)` +
-      (left ? ` — ${left} still blocked on other microbatches.` : ' — strand complete.'));
+      (left ? ` — ${left} still blocked on other microbatches.` : '') +
+      (leftW ? ` W ops left to you — they're filler; spend them where bubbles would be.` :
+       left ? '' : ' — strand complete.'));
   }
 }
 
@@ -1028,7 +1075,7 @@ function renderItem(item, sim, isGhost = false) {
     `\n(click: remove this + the rest of microbatch ${op.mb} after it · ` +
     `double-click: greedily finish microbatch ${op.mb} · drag: enter edit mode and slide it)`;
   if (!isGhost) {
-    el.onmouseenter = () => traceDeps(op);
+    el.onmouseenter = ev => traceDeps(op, ev);
     el.onmouseleave = () => clearTrace();
     // drag on a normal-mode op enters edit mode seamlessly (armed on
     // pointerdown, triggered by movement past a threshold)
@@ -1052,8 +1099,10 @@ function renderItem(item, sim, isGhost = false) {
   return el;
 }
 
-function traceDeps(op) {
+function traceDeps(op, ev) {
   if (state.showCrit) return;   // crit view owns the dim/highlight classes
+  if (!ev?.shiftKey) return;    // trace only while Shift is held — hovering
+                                // during rapid placement otherwise strobes
   const sim = state.sim;
   const up = new Set(E.depsOf(sim.cfg, op));
   const down = new Set(sim.ops.filter(o => E.depsOf(sim.cfg, o).includes(op.id)).map(o => o.id));
@@ -1628,6 +1677,17 @@ function init() {
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closePopover(); });
   document.addEventListener('pointermove', ev => { maybeStartArmedDrag(ev); onEditDragMove(ev); });
   document.addEventListener('pointerup', () => { armedDrag = null; onEditDragEnd(); });
+  // dblclick fallback: after a ghost click the grid re-renders, so the second
+  // click can land on whatever replaced the ghost (op, membar, lane). If it
+  // wasn't handled by an op element, chase the just-placed op's microbatch.
+  document.addEventListener('dblclick', ev => {
+    if (state.editing) return;
+    if (ev.target.closest?.('.op[data-opid]')) return;   // op handler took it
+    if (!ev.target.closest?.('#gridwrap')) return;
+    if (performance.now() - lastGhostPlace.at > 700 || !lastGhostPlace.id) return;
+    const op = state.sim.byId.get(lastGhostPlace.id);
+    if (op) chaseMicrobatch(op.mb);
+  });
 
   const tsel = $('themesel');
   for (const [k, t] of Object.entries(THEMES)) {
