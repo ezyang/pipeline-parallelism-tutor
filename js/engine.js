@@ -237,13 +237,22 @@ export function rankCandidates(state, rank, policyKey, relaxQuota = false) {
     const q = warmupQuota(state.cfg, rank);
     cands = cands.filter(o => o.kind !== 'F' || state.fbDepth[rank] < q);
   }
-  // priority: kind class, then microbatch (don't let one mb lag), then stage
-  // (lower stage first for F — feed the pipe; higher stage first for B is
-  // implied by readiness). Deterministic, so "ties" = same (kind, mb).
+  // priority: kind class, then position in the microbatch stream. With V=1
+  // that's just microbatch order. With V>1, follow Megatron's interleaved
+  // order: microbatches move in groups of P per chunk (F0..F3 on chunk 0,
+  // then F0..F3 on chunk 1, then F4..F7 on chunk 0, ...), so the stream key
+  // is (mb group, chunk, mb).
+  const P = state.cfg.P;
+  const S = numStages(state.cfg);
+  // forwards climb stages 0..S-1; backwards descend S-1..0
+  const key = o => {
+    const st = o.kind === 'F' ? o.stage : S - 1 - o.stage;
+    return (Math.floor(o.mb / P) * S + st) * P + (o.mb % P);
+  };
   cands.sort((a, b) =>
-    (order[a.kind] - order[b.kind]) || (a.mb - b.mb) || (a.stage - b.stage));
+    (order[a.kind] - order[b.kind]) || (key(a) - key(b)));
   const tie = cands.length >= 2 &&
-    order[cands[0].kind] === order[cands[1].kind] && cands[0].mb === cands[1].mb;
+    order[cands[0].kind] === order[cands[1].kind] && key(cands[0]) === key(cands[1]);
   return { cands, tie };
 }
 

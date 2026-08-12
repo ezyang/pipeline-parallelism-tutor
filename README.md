@@ -5,7 +5,9 @@ work (GPipe, 1F1B, interleaved/VPP, zero-bubble). You build the schedule *by
 hand*, one op at a time, and the tool checks legality, traces dependencies,
 tracks activation memory, and scores you against a reference policy.
 
-**Play it:** open `index.html` (any static server: `python3 -m http.server`).
+**Play it: https://ezyang.github.io/pipeline-parallelism-tutor/**
+
+Or locally: open `index.html` (any static server: `python3 -m http.server`).
 No build step, no dependencies — plain ES modules.
 
 ## The idea
