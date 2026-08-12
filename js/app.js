@@ -1542,6 +1542,7 @@ function renderCompare() {
       el.style.cursor = 'default';
       lane.appendChild(el);
     }
+    grid.appendChild(renderMemStrip(ref, r, horizon));
     row.appendChild(lane);
     grid.appendChild(row);
   }
