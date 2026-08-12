@@ -152,6 +152,14 @@ main > div { min-width: 0; }
 
 /* free-edit mode */
 .op.crit { outline: 2.5px solid var(--ink); outline-offset: 1px; z-index: 7; }
+.op.future { opacity: 0.13; transition: opacity 0.25s; }
+.op.running { outline: 2.5px solid var(--accent); outline-offset: 1px; z-index: 7;
+  transition: outline-color 0.15s; }
+#playcursor {
+  position: absolute; top: 14px; bottom: 0; width: 0; z-index: 8;
+  border-left: 2px solid var(--accent); pointer-events: none;
+  transition: left 0.38s linear;
+}
 .op.violation { outline: 2.5px solid var(--bad); outline-offset: 1px; z-index: 7; }
 .op.lifted { opacity: 0.45; border-style: dashed; box-shadow: 0 0 0 3px var(--accent); }
 .slot.dropcell { opacity: 0.15; border-style: dotted; z-index: 2; }

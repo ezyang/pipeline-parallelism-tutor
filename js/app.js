@@ -51,6 +51,8 @@ const state = {
   batches: [],             // size of each applied batch (for batch undo)
   showCrit: false,         // critical-path highlight on a finished schedule
   showCompare: false,      // reference schedule shown below yours
+  playT: null,             // playback cursor (null = not playing)
+  playTimer: null,
   editing: false,          // free-edit mode: invariants may be broken
   plan: null,              // Map(id -> start) while editing
   lifted: null,            // op id currently picked up (edit mode)
@@ -86,6 +88,7 @@ function readCustomCfg() {
 }
 
 function loadLevel(level, actions = []) {
+  if (state.playTimer) stopPlayback(false);
   state.level = level;
   state.sim = E.replay(level.cfg, actions);
   state.ref = E.referenceSchedule(level.cfg);
@@ -140,6 +143,7 @@ function tryAction(action, opts) { return tryActions([action], opts); }
 // Apply a batch atomically (e.g. auto-padded idles + the chosen op): validate
 // on a replay first so a failure commits nothing. Undo pops whole batches.
 function tryActions(actions, { silent = false } = {}) {
+  if (state.playTimer) stopPlayback(false);
   try {
     const test = E.replay(state.sim.cfg, [...state.sim.actions, ...actions]);
     state.sim = test;
@@ -207,6 +211,7 @@ function afterChange(action, silent) {
 }
 
 function undo() {
+  if (state.playTimer) stopPlayback(false);
   const acts = state.sim.actions;
   if (!acts.length) return;
   const n = state.batches.pop() ?? 1;
@@ -1048,6 +1053,60 @@ function toggleCompare() {
   }
 }
 
+// --- playback ------------------------------------------------------------------
+// Sweep a "now" cursor across the schedule: ops in the future are faded, the
+// op executing on each rank right now is lit. Connects the static time-space
+// picture to what the cluster is doing moment to moment.
+
+function stopPlayback(rerender = true) {
+  clearInterval(state.playTimer);
+  state.playTimer = null;
+  state.playT = null;
+  $('playbtn').textContent = '▶ play';
+  if (rerender) renderAll();
+}
+
+function togglePlayback() {
+  if (state.playTimer) { stopPlayback(); return; }
+  const end = Math.max(...state.sim.frontier);
+  if (!end) return;
+  state.playT = 0;
+  $('playbtn').textContent = '⏹ stop';
+  closePopover();
+  applyPlaybackClasses();
+  state.playTimer = setInterval(() => {
+    state.playT++;
+    if (state.playT > end) { stopPlayback(); return; }
+    applyPlaybackClasses();
+  }, 420);
+}
+
+function applyPlaybackClasses() {
+  const t = state.playT;
+  const sim = state.sim;
+  document.querySelectorAll('#grid .op[data-opid]').forEach(el => {
+    const p = sim.placed.get(el.dataset.opid);
+    el.classList.remove('future', 'running');
+    if (p.start > t) el.classList.add('future');
+    else if (p.start <= t && t < p.end) el.classList.add('running');
+  });
+  let cursor = $('playcursor');
+  if (!cursor) {
+    cursor = document.createElement('div');
+    cursor.id = 'playcursor';
+    $('grid').appendChild(cursor);
+  }
+  cursor.style.left = (130 + (t + 1) * CELL) + 'px';
+  // narrate what's happening now
+  const active = [];
+  for (let r = 0; r < sim.cfg.P; r++) {
+    const it = sim.rows[r].find(i => i.start <= t && t < i.start + i.dur);
+    if (it?.id) active.push(`rank ${r}: ${E.label(sim.byId.get(it.id))}`);
+    else if (it) active.push(`rank ${r}: idle`);
+  }
+  setStatus(`t=${t} — ${active.join(' · ') || 'nothing running yet'}`);
+}
+
 // Toggle critical-path highlight: dim everything off the path, show why the
 // makespan is what it is. Hovering idles explains each bubble (tooltip).
 function toggleCrit() {
@@ -1169,6 +1228,7 @@ function init() {
   $('retrybtn').onclick = () => { hideBanner(); loadLevel(state.level); };
   $('critbtn').onclick = toggleCrit;
   $('comparebtn').onclick = toggleCompare;
+  $('playbtn').onclick = togglePlayback;
 
   document.addEventListener('keydown', e => {
     if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
