@@ -686,6 +686,57 @@ function editRemove(opId) {
   renderAll();
 }
 
+// --- edit-mode dragging -------------------------------------------------------
+// Grab an op and slide it along its lane; snaps per slot, plan and violations
+// update live. If the op belongs to the selected strand, the strand slides.
+let editDrag = null;   // {id, startX, origPlan, strand, lastDelta, moved}
+
+function beginEditDrag(op, ev) {
+  editDrag = {
+    id: op.id,
+    startX: ev.clientX,
+    origPlan: new Map(state.plan),
+    strand: state.strandMb === op.mb ? op.mb : null,
+    lastDelta: 0,
+    moved: false,
+  };
+}
+
+function onEditDragMove(ev) {
+  if (!editDrag) return;
+  const delta = Math.round((ev.clientX - editDrag.startX) / CELL);
+  if (delta === editDrag.lastDelta) return;
+  let next;
+  if (editDrag.strand !== null) {
+    next = E.shiftMicrobatch(editDrag.origPlan, state.sim.byId, editDrag.strand, delta);
+  } else {
+    const t = editDrag.origPlan.get(editDrag.id) + delta;
+    if (t < 0) return;
+    next = new Map(editDrag.origPlan);
+    next.set(editDrag.id, t);
+  }
+  if (!next) return;                     // would cross t=0
+  editDrag.lastDelta = delta;
+  editDrag.moved = editDrag.moved || delta !== 0;
+  state.plan = next;
+  renderAll();
+}
+
+function onEditDragEnd() {
+  if (!editDrag) return;
+  const wasDrag = editDrag.moved;
+  editDrag = null;
+  if (wasDrag) {
+    const v = E.planViolations(state.level.cfg, state.plan);
+    setStatus(v.length
+      ? `Dropped. ${v.length} violation(s) — drag more or fix elsewhere.`
+      : 'Dropped. ✓ no violations.');
+    suppressNextClick = true;            // the browser fires click after pointerup
+    setTimeout(() => { suppressNextClick = false; }, 0);
+  }
+}
+let suppressNextClick = false;
+
 function shiftStrand(delta) {
   if (state.strandMb === null) return;
   const shifted = E.shiftMicrobatch(state.plan, state.sim.byId, state.strandMb, delta);
@@ -741,10 +792,18 @@ function renderEditGrid() {
       if (state.lifted === id) el.classList.add('lifted');
       if (state.strandMb === op.mb) el.classList.add('strand');
       el.title = opTitle(op, sim) +
-        '\n(click: lift/move · shift-click: unplace · double-click: select whole microbatch strand)';
+        '\n(drag: slide along the lane · shift-click: unplace · ' +
+        'double-click: select/deselect whole microbatch strand — dragging then moves the strand)';
+      el.style.cursor = 'grab';
+      el.onpointerdown = ev => {
+        if (ev.button !== 0 || ev.shiftKey) return;
+        ev.preventDefault();
+        beginEditDrag(op, ev);
+      };
       let clickTimer = null;
       el.onclick = ev => {
         ev.stopPropagation();
+        if (suppressNextClick) return;
         if (ev.shiftKey) { editRemove(id); return; }
         if (clickTimer) return;
         clickTimer = setTimeout(() => { clickTimer = null; editClickOp(id); }, 230);
@@ -1470,6 +1529,8 @@ function init() {
   });
   $('gridwrap').addEventListener('scroll', closePopover);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closePopover(); });
+  document.addEventListener('pointermove', onEditDragMove);
+  document.addEventListener('pointerup', onEditDragEnd);
 
   const tsel = $('themesel');
   for (const [k, t] of Object.entries(THEMES)) {
