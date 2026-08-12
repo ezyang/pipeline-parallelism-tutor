@@ -59,6 +59,7 @@ const state = {
   lifted: null,            // op id currently picked up (edit mode)
   seenEvents: new Set(),
   hoverGhost: null,
+  followGhosts: [],        // clickable "just unblocked" ghosts after a placement
   cleared: false,          // this level's goal met this session
 };
 
@@ -98,6 +99,7 @@ function loadLevel(level, actions = []) {
   state.seenEvents = new Set();
   state.selectedRank = 0;
   state.hoverGhost = null;
+  state.followGhosts = [];
   state.cleared = false;
   state.editing = false;
   state.plan = null;
@@ -174,6 +176,18 @@ function autoAdvanceSelection() {
 
 function afterChange(action, silent) {
   const sim = state.sim;
+  // "follow the microbatch": ghost the ops this placement just unblocked, at
+  // their earliest legal slots — click one to chase the chain across ranks
+  state.followGhosts = [];
+  if (action?.type === 'op' && !E.isDone(sim)) {
+    for (const dep of sim.ops) {
+      if (sim.placed.has(dep.id)) continue;
+      if (!E.depsOf(sim.cfg, dep).includes(action.id)) continue;
+      const t = E.earliestStart(sim, dep);
+      if (t === Infinity || t < sim.frontier[dep.rank]) continue;
+      state.followGhosts.push({ id: dep.id, rank: dep.rank, start: t });
+    }
+  }
   if (action?.type === 'op' && !silent) {
     const op = sim.byId.get(action.id);
     if (op.kind === 'B' && sim.rows[action.rank].filter(
@@ -222,6 +236,7 @@ function undo() {
   const n = state.batches.pop() ?? 1;
   state.redo.push(acts.slice(acts.length - n));
   state.sim = E.replay(state.level.cfg, acts.slice(0, acts.length - n));
+  state.followGhosts = [];
   hideBanner(); setStatus('');
   autoAdvanceSelection();
   saveHash(); renderAll();
@@ -388,6 +403,20 @@ function renderGrid() {
         el.classList.add('ghost');
         lane.appendChild(el);
       }
+    }
+    // "just unblocked" follow ghosts: click to place (pads idles up to the slot)
+    for (const g of state.followGhosts.filter(g => g.rank === r)) {
+      const op = sim.byId.get(g.id);
+      const el = renderItem({ id: g.id, start: g.start, dur: op.dur }, sim, true);
+      el.classList.add('ghost', 'follow');
+      el.title = `${E.label(op)} just became ready — click to place it here (t=${g.start}) and follow the microbatch`;
+      el.style.cursor = 'pointer';
+      el.onclick = ev => {
+        ev.stopPropagation();
+        const pad = Array.from({ length: g.start - sim.frontier[r] }, () => ({ rank: r, type: 'idle' }));
+        tryActions([...pad, { rank: r, type: 'op', id: g.id }]);
+      };
+      lane.appendChild(el);
     }
     // clickable slots from the frontier onward; clicking a later one
     // auto-pads the gap with idles

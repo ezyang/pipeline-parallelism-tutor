@@ -133,6 +133,8 @@ main > div { min-width: 0; }
 .op.dep-up { outline: 2.5px solid var(--bad); outline-offset: 1px; z-index: 5; }
 .op.dep-down { outline: 2.5px solid var(--good); outline-offset: 1px; z-index: 5; }
 .op.ghost { opacity: 0.5; border-style: dashed; box-shadow: none; z-index: 6; }
+.op.ghost.follow { opacity: 0.4; }
+.op.ghost.follow:hover { opacity: 0.95; box-shadow: 0 0 0 2px var(--accent); }
 .frontier {
   position: absolute; top: 1px; bottom: 1px; width: 0;
   border-left: 2px solid var(--accent); z-index: 4;
