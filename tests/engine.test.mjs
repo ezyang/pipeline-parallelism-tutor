@@ -180,3 +180,35 @@ test('recognizeSchedule: identifies 1F1B, GPipe, ZB-H1, and novel', () => {
   // whatever it is, the call must not crash and must return an object
   assert.ok(r5 !== null);
 });
+
+test('criticalPath: walks back through gaters; clean 1F1B has no breaks', () => {
+  const cfg = { P: 4, V: 1, M: 8, model: '11', cap: 4 };
+  const s = E.newState(cfg); E.project(s, '1f1b');
+  const { ids, breaks } = E.criticalPath(s);
+  assert.ok(ids.length >= 8);
+  assert.strictEqual(breaks.length, 0);
+  // path ends at the very last op
+  const last = ids[ids.length - 1];
+  assert.strictEqual(s.placed.get(last).end, E.score(s).makespan);
+});
+
+test('explainIdle: names the blocking dep for a forced bubble', () => {
+  const cfg = { P: 2, V: 1, M: 4, model: '11', cap: null };
+  const s = E.newState(cfg); E.project(s, 'gpipe');
+  // rank 0 idles at t=4..6 waiting for B1_0 etc.
+  const idle = s.rows[0].find(it => !it.id);
+  assert.ok(idle);
+  const ex = E.explainIdle(s, 0, idle.start);
+  assert.strictEqual(ex.reason, 'dep');
+  assert.match(ex.msg, /waiting for/);
+});
+
+test('gaterOf: voluntary delay detected', () => {
+  const cfg = { P: 1, V: 1, M: 2, model: '11', cap: null };
+  const s = E.newState(cfg);
+  E.apply(s, { rank: 0, type: 'op', id: 'F0_0' });
+  E.apply(s, { rank: 0, type: 'idle' });
+  E.apply(s, { rank: 0, type: 'op', id: 'F0_1' }); // could have run at t=1
+  const g = E.gaterOf(s, 'F0_1');
+  assert.strictEqual(g.kind, 'delayed');
+});

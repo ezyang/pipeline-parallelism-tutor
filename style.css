@@ -71,7 +71,7 @@ main > div { min-width: 0; }
   border: 1px solid var(--ring); border-radius: 10px;
   padding: 12px 14px;
 }
-.blurb { color: var(--ink-2); margin: 6px 0 0; white-space: pre-line; }
+.blurb { color: var(--ink-2); margin: 6px 0 0; max-width: 72ch; }
 
 /* ---- schedule grid ---- */
 #gridwrap { overflow-x: auto; padding-bottom: 6px; }
@@ -151,6 +151,7 @@ main > div { min-width: 0; }
 .op.idle:hover { border-color: var(--accent); opacity: 1; }
 
 /* free-edit mode */
+.op.crit { outline: 2.5px solid var(--ink); outline-offset: 1px; z-index: 7; }
 .op.violation { outline: 2.5px solid var(--bad); outline-offset: 1px; z-index: 7; }
 .op.lifted { opacity: 0.45; border-style: dashed; box-shadow: 0 0 0 3px var(--accent); }
 .slot.dropcell { opacity: 0.15; border-style: dotted; z-index: 2; }

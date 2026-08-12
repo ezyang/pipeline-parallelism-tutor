@@ -49,6 +49,8 @@ const state = {
   mode: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
   redo: [],                // stack of action batches
   batches: [],             // size of each applied batch (for batch undo)
+  showCrit: false,         // critical-path highlight on a finished schedule
+  showCompare: false,      // reference schedule shown below yours
   editing: false,          // free-edit mode: invariants may be broken
   plan: null,              // Map(id -> start) while editing
   lifted: null,            // op id currently picked up (edit mode)
@@ -95,6 +97,8 @@ function loadLevel(level, actions = []) {
   state.cleared = false;
   state.editing = false;
   state.plan = null;
+  state.showCrit = false;
+  state.showCompare = false;
   $('blurb').textContent = level.blurb;
   $('goal').textContent = goalText(level);
   hideBanner();
@@ -239,13 +243,12 @@ function autoRunUntilStrange() {
   if (res.stopped === 'event') {
     setStatus(`⏸ ${res.event.msg}` +
       (res.event.kind === 'tie' ? ` — choices: ${res.event.choices.join(', ')}` : ''));
-    log(res.event.msg, 'event');
   } else if (res.stopped === 'done') {
     afterChange(null, true); return;
   } else if (res.stopped === 'deadlock') {
     setStatus('💀 Deadlock: nothing is ready anywhere and nothing is running. Undo and rethink.', 'err');
   }
-  for (const e of res.events) if (e.kind !== 'tie') log(e.msg);
+  for (const e of res.events) log(e.msg, e === res.event ? 'event' : '');
   autoAdvanceSelection();
   saveHash(); renderAll();
 }
@@ -264,7 +267,7 @@ function projectRest() {
 
 function renderAll() {
   if (state.editing) { renderEditGrid(); renderEditChrome(); return; }
-  renderGrid(); renderPicker(); renderStats(); renderChrome();
+  renderGrid(); renderPicker(); renderStats(); renderChrome(); renderCompare();
 }
 
 function renderEditChrome() {
@@ -304,6 +307,9 @@ function renderGrid() {
   }
   grid.appendChild(axis);
 
+  const critSet = state.showCrit && E.isDone(sim)
+    ? new Set(E.criticalPath(sim).ids) : null;
+
   for (let r = 0; r < cfg.P; r++) {
     const row = document.createElement('div');
     row.className = 'rankrow' + (r === state.selectedRank ? ' selected' : '');
@@ -321,7 +327,11 @@ function renderGrid() {
     const lane = document.createElement('div');
     lane.className = 'lane';
     lane.style.width = (horizon * CELL) + 'px';
-    for (const item of sim.rows[r]) lane.appendChild(renderItem(item, sim));
+    for (const item of sim.rows[r]) {
+      const el = renderItem(item, sim);
+      if (critSet && item.id) el.classList.add(critSet.has(item.id) ? 'crit' : 'dim');
+      lane.appendChild(el);
+    }
     if (state.hoverGhost) {
       for (const g of state.hoverGhost.filter(g => g.rank === r)) {
         const el = renderItem({ id: g.id, start: g.start, dur: g.end - g.start }, sim, true);
@@ -663,12 +673,16 @@ function renderItem(item, sim, isGhost = false) {
   if (!item.id) {
     el.className = 'op idle';
     if (isGhost) { el.title = 'idle (bubble)'; return el; }
-    el.title = `idle at t=${item.start} — click to fill it with work`;
-    el.onclick = ev => {
-      ev.stopPropagation();
-      const r = [...state.sim.rows.keys()].find(rr => state.sim.rows[rr].includes(item));
-      openIdlePopover(r, item.start, ev);
-    };
+    const r = state.sim.rows.findIndex(row => row.includes(item));
+    if (E.isDone(state.sim)) {
+      el.title = E.explainIdle(state.sim, r, item.start).msg;
+    } else {
+      el.title = `idle at t=${item.start} — click to fill it with work`;
+      el.onclick = ev => {
+        ev.stopPropagation();
+        openIdlePopover(r, item.start, ev);
+      };
+    }
     return el;
   }
   const op = sim.byId.get(item.id);
@@ -689,6 +703,7 @@ function renderItem(item, sim, isGhost = false) {
 }
 
 function traceDeps(op) {
+  if (state.showCrit) return;   // crit view owns the dim/highlight classes
   const sim = state.sim;
   const up = new Set(E.depsOf(sim.cfg, op));
   const down = new Set(sim.ops.filter(o => E.depsOf(sim.cfg, o).includes(op.id)).map(o => o.id));
@@ -700,6 +715,7 @@ function traceDeps(op) {
   });
 }
 function clearTrace() {
+  if (state.showCrit) return;
   document.querySelectorAll('#grid .op').forEach(el =>
     el.classList.remove('dep-up', 'dep-down', 'dim'));
 }
@@ -974,6 +990,78 @@ function showBanner(won, s) {
   $('nextlevel').style.display = won && next ? '' : 'none';
   if (won && next) $('nextlevel').textContent = `next: ${next.name} →`;
   $('retrybtn').style.display = won ? 'none' : '';
+  $('critbtn').style.display = '';
+  $('critbtn').textContent = state.showCrit ? 'hide critical path' : '🔦 critical path';
+  $('comparebtn').style.display = '';
+  $('comparebtn').textContent = state.showCompare ? 'hide reference' : '⇵ compare with par';
+}
+
+// Render the reference schedule as a second, read-only grid for comparison.
+function renderCompare() {
+  const wrap = $('compare');
+  if (!state.showCompare || !E.isDone(state.sim)) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  const ref = state.ref.state;
+  const horizon = Math.max(...state.sim.frontier, ref ? E.score(ref).makespan : 0) + 4;
+  const grid = $('comparegrid');
+  grid.innerHTML = '';
+  const axis = document.createElement('div');
+  axis.className = 'timeaxis';
+  for (let t = 0; t < horizon; t++) {
+    const s = document.createElement('span');
+    if (t % 2 === 0) s.textContent = t;
+    axis.appendChild(s);
+  }
+  grid.appendChild(axis);
+  for (let r = 0; r < ref.cfg.P; r++) {
+    const row = document.createElement('div');
+    row.className = 'rankrow';
+    const head = document.createElement('div');
+    head.className = 'rankhead';
+    head.innerHTML = `<span class="rname">rank ${r}</span><span class="rmeta">reference</span>`;
+    row.appendChild(head);
+    const lane = document.createElement('div');
+    lane.className = 'lane';
+    lane.style.width = (horizon * CELL) + 'px';
+    for (const item of ref.rows[r]) {
+      const el = renderItem(item, ref, true);
+      el.classList.remove('ghost');
+      el.style.cursor = 'default';
+      lane.appendChild(el);
+    }
+    row.appendChild(lane);
+    grid.appendChild(row);
+  }
+}
+
+function toggleCompare() {
+  state.showCompare = !state.showCompare;
+  renderCompare();
+  if (E.isDone(state.sim)) showBanner(state.cleared || goalMet(E.score(state.sim)), E.score(state.sim));
+  if (state.showCompare) {
+    const d = E.score(state.sim).makespan - state.ref.score.makespan;
+    setStatus(d > 0
+      ? `Reference shown below yours. It finishes ${d} slot(s) sooner — scan column by column to find where you fell behind.`
+      : d < 0
+      ? `Reference shown below yours — and you BEAT it by ${-d} slot(s). 🏆`
+      : `Reference shown below yours. Same makespan — compare the op orders to see if you found a different route.`);
+  }
+}
+
+// Toggle critical-path highlight: dim everything off the path, show why the
+// makespan is what it is. Hovering idles explains each bubble (tooltip).
+function toggleCrit() {
+  state.showCrit = !state.showCrit;
+  if (state.showCrit) {
+    const { breaks } = E.criticalPath(state.sim);
+    setStatus(breaks.length
+      ? `Critical path shown. ⚠ It hit a voluntary delay: ${E.label(state.sim.byId.get(breaks[0].id))} ` +
+        `started at t=${breaks[0].actual} but could have started at t=${breaks[0].couldHaveStarted} — that gap is yours to close.`
+      : `Critical path shown: the chain of ops that sets the makespan. Every op on it is gated by the one before — ` +
+        `to finish faster, this chain itself must change. Hover any idle to see why that bubble exists.`);
+  } else setStatus('');
+  renderAll();
+  if (E.isDone(state.sim)) showBanner(state.cleared || goalMet(E.score(state.sim)), E.score(state.sim));
 }
 function hideBanner() { $('banner').style.display = 'none'; }
 
@@ -1079,6 +1167,8 @@ function init() {
     if (next) { hideBanner(); loadLevel(next); }
   };
   $('retrybtn').onclick = () => { hideBanner(); loadLevel(state.level); };
+  $('critbtn').onclick = toggleCrit;
+  $('comparebtn').onclick = toggleCompare;
 
   document.addEventListener('keydown', e => {
     if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;

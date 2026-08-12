@@ -679,6 +679,88 @@ export function referenceSchedule(cfg) {
   return { state: s, done, deadlock, score: score(s) };
 }
 
+// --- Post-mortem analysis -----------------------------------------------------
+// What actually gated each op: the dependency or same-rank predecessor whose
+// finish time equals the op's start. If nothing ends exactly at its start, the
+// op started later than it had to — a voluntary delay (scheduling choice).
+
+export function gaterOf(state, id) {
+  const op = state.byId.get(id);
+  const p = state.placed.get(id);
+  if (!p) return null;
+  if (p.start === 0) return { kind: 'start' };
+  // same-rank predecessor (resource constraint)
+  let prevOp = null;
+  for (const it of state.rows[op.rank]) {
+    if (it.id && it.start + it.dur === p.start) { prevOp = it.id; break; }
+  }
+  // dependency constraint
+  for (const depId of depsOf(state.cfg, op)) {
+    const dp = state.placed.get(depId);
+    if (dp && dp.end === p.start) return { kind: 'dep', id: depId };
+  }
+  if (prevOp) return { kind: 'resource', id: prevOp };
+  // nothing ends at start: op was voluntarily delayed
+  let earliest = 0;
+  for (const depId of depsOf(state.cfg, op)) {
+    const dp = state.placed.get(depId);
+    if (dp) earliest = Math.max(earliest, dp.end);
+  }
+  return { kind: 'delayed', couldHaveStarted: earliest };
+}
+
+// Critical path: walk back from the op that finishes last, following gaters.
+// Returns { ids, breaks } — breaks are voluntary delays found on the walk
+// (the path "restarts" there; each break is a place the makespan could shrink).
+export function criticalPath(state) {
+  let lastId = null, lastEnd = -1;
+  for (const [id, p] of state.placed) {
+    if (p.end > lastEnd) { lastEnd = p.end; lastId = id; }
+  }
+  const ids = [];
+  const breaks = [];
+  let cur = lastId;
+  const seen = new Set();
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    ids.push(cur);
+    const g = gaterOf(state, cur);
+    if (!g || g.kind === 'start') break;
+    if (g.kind === 'delayed') {
+      breaks.push({ id: cur, couldHaveStarted: g.couldHaveStarted,
+        actual: state.placed.get(cur).start });
+      break;
+    }
+    cur = g.id;
+  }
+  return { ids: ids.reverse(), breaks };
+}
+
+// Explain an idle slot at (rank, t): what ran next on this rank and why it
+// couldn't have run at t instead.
+export function explainIdle(state, rank, t) {
+  const next = state.rows[rank].find(it => it.id && it.start > t);
+  if (!next) return { reason: 'drain', msg:
+    `Nothing runs after this on rank ${rank} — this is fill/drain stagger, not a schedulable gap.` };
+  const op = state.byId.get(next.id);
+  // why not at t? find the blocking dep at time t
+  let blocker = null, blockEnd = 0;
+  for (const depId of depsOf(state.cfg, op)) {
+    const dp = state.placed.get(depId);
+    if (!dp) continue;
+    if (dp.end > t && dp.end > blockEnd) { blocker = depId; blockEnd = dp.end; }
+  }
+  if (blocker) {
+    const bop = state.byId.get(blocker);
+    return { reason: 'dep', blocker, msg:
+      `Rank ${rank} idles here because its next op, ${label(op)}, was waiting for ` +
+      `${label(bop)} on rank ${bop.rank} (finished t=${blockEnd}). To kill this bubble, ` +
+      `${label(bop)} would have to run earlier — or something else must fill this slot.` };
+  }
+  return { reason: 'choice', msg:
+    `${label(op)} could have started at t=${t} — this bubble was a scheduling choice, not forced.` };
+}
+
 // --- Schedule recognition ---------------------------------------------------
 // Compare a completed schedule against canonical schedules from the literature
 // (each = a policy projection, possibly with modified cfg). Matching is up to

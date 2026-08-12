@@ -63,12 +63,18 @@
     </div>
     <div class="banner" id="banner" style="display:none">
       <span id="bannerMsg"></span>
+      <button id="critbtn">🔦 critical path</button>
+      <button id="comparebtn">⇵ compare with par</button>
       <button id="nextlevel" class="primary"></button>
       <button id="retrybtn">↩ retry</button>
     </div>
     <div class="panel" style="margin-top:14px">
       <h2>Schedule</h2>
       <div id="gridwrap"><div id="grid"></div><div id="popover" class="popover" style="display:none"></div></div>
+      <div id="compare" style="display:none">
+        <h2 style="margin-top:12px">Reference (par) schedule</h2>
+        <div style="overflow-x:auto"><div id="comparegrid"></div></div>
+      </div>
       <p class="hint">Click any empty slot to place an op there — gaps before it become idles
       automatically. Hover an op to trace dependencies (red = it needs, green = it unblocks);
       click a placed op to <b>rewind</b> to just before it. The thin bars under each lane are
