@@ -25,25 +25,6 @@
   </label>
   <span class="spacer"></span>
   <span class="btngroup">
-    <button id="undo" title="Cmd/Ctrl+Z">↩ undo</button>
-    <button id="redo" title="Cmd/Ctrl+Shift+Z">↪ redo</button>
-    <button id="resetbtn">reset</button>
-  </span>
-  <span class="btngroup">
-    <button id="loadsol" style="display:none">📂 my best</button>
-    <button id="editbtn" title="Free edit: move ops around, temporarily breaking invariants; commit when consistent again">✏️ edit</button>
-    <button id="editdone" class="primary" style="display:none">✓ finish editing</button>
-    <button id="editcancel" style="display:none">✕ cancel edit</button>
-  </span>
-  <span class="btngroup">
-    <button id="stampbtn" class="primary" style="display:none">⧉ stamp block</button>
-    <button id="hintbtn" title="Tell me the standard move (pulses it in the picker; you still place it)">💡 hint</button>
-    <button id="autostep" title="Place the standard move for me — one op on the selected rank (Space). Refuses when there's a genuine choice.">step ▸</button>
-    <button id="autorun" title="Keep placing standard moves on all ranks until something interesting happens (a real choice, a bubble, a phase change), then stop and hand back control. Great for grinding through warmup.">run until strange ▸▸</button>
-    <button id="projectbtn" class="primary" title="Give up and finish the whole schedule with the standard policy (this is what par measures)">solve ⏭</button>
-  </span>
-  <span class="btngroup">
-    <button id="playbtn" title="Animate the schedule: watch what each rank is doing as time advances" disabled>▶ play</button>
     <button id="sharebtn" title="Copy a link to this exact schedule position">🔗 share</button>
     <button id="svgbtn" title="Download the schedule as a standalone SVG figure" disabled>⤓ svg</button>
     <button id="unlockall" title="Skip the progression and unlock every level and tool">🔓 unlock all</button>
@@ -88,7 +69,30 @@
       <button id="retrybtn">↩ retry</button>
     </div>
     <div class="panel" style="margin-top:14px">
-      <h2>Schedule</h2>
+      <div class="schedhead">
+        <h2>Schedule</h2>
+        <span class="btngroup">
+          <button id="undo" title="Cmd/Ctrl+Z">↩ undo</button>
+          <button id="redo" title="Cmd/Ctrl+Shift+Z">↪ redo</button>
+          <button id="resetbtn">reset</button>
+        </span>
+        <span class="btngroup">
+          <button id="loadsol" style="display:none">📂 my best</button>
+          <button id="editbtn" title="Free edit: move ops around, temporarily breaking invariants; commit when consistent again">✏️ edit</button>
+          <button id="editdone" class="primary" style="display:none">✓ finish editing</button>
+          <button id="editcancel" style="display:none">✕ cancel edit</button>
+        </span>
+        <span class="btngroup">
+          <button id="stampbtn" class="primary" style="display:none">⧉ stamp block</button>
+          <button id="hintbtn" title="Tell me the standard move (pulses it in the picker; you still place it)">💡 hint</button>
+          <button id="autostep" title="Place the standard move for me — one op on the selected rank (Space). Refuses when there's a genuine choice.">step ▸</button>
+          <button id="autorun" title="Keep placing standard moves on all ranks until something interesting happens (a real choice, a bubble, a phase change), then stop and hand back control. Great for grinding through warmup.">run until strange ▸▸</button>
+          <button id="projectbtn" class="primary" title="Give up and finish the whole schedule with the standard policy (this is what par measures)">solve ⏭</button>
+        </span>
+        <span class="btngroup">
+          <button id="playbtn" title="Animate the schedule: watch what each rank is doing as time advances" disabled>▶ play</button>
+        </span>
+      </div>
       <div id="gridwrap"><div id="grid"></div><div id="popover" class="popover" style="display:none"></div></div>
       <div id="compare" style="display:none">
         <h2 style="margin-top:12px">Reference (par) schedule</h2>

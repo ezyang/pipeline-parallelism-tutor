@@ -51,6 +51,12 @@ header {
 header .spacer { flex: 1; }
 .btngroup { display: inline-flex; gap: 4px; padding: 0 8px; border-left: 1px solid var(--grid); }
 .btngroup:first-of-type { border-left: none; }
+.schedhead {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0;
+  margin-bottom: 10px;
+}
+.schedhead h2 { margin: 0 12px 0 0; }
+.schedhead .btngroup:first-of-type { border-left: none; padding-left: 0; }
 label.ctl { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); font-size: 13px; }
 select, button, input[type="number"] {
   font: inherit; color: var(--ink);
