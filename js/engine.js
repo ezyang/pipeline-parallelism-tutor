@@ -633,6 +633,19 @@ function planCompletionWindows(cfg, plan, probe) {
   return need;
 }
 
+// Shift every placed op of one microbatch by delta slots (plan-level; may
+// produce violations — that's the caller's problem to show).
+export function shiftMicrobatch(plan, byId, mb, delta) {
+  const out = new Map(plan);
+  for (const [id, t] of plan) {
+    if (byId.get(id).mb === mb) {
+      if (t + delta < 0) return null;
+      out.set(id, t + delta);
+    }
+  }
+  return out;
+}
+
 // Canonicalize a valid, complete-or-partial plan back to an action list
 // (per-rank time order, gaps filled with idles). Throws on overlap.
 export function planToActions(cfg, plan) {
@@ -804,8 +817,10 @@ export function microbatchPrefix(state) {
 }
 
 // Stamp ONE more microbatch strand, greedily: each op of microbatch k aims
-// for its pattern slot (mb0's time + k*w) and gets shoved right until it is
-// legal — deps met, rank slot free, memory cap respected. Returns
+// for its pattern slot — the SAME op in the previous strand, one period (w)
+// later — and gets shoved right until legal (deps met, rank free, memory ok).
+// Following the previous strand (not mb0 + k·w) means a hand-designed stagger
+// between mb0 and mb1 propagates to every later strand. Returns
 // { plan, shoves: [{id, target, actual}] } or { violations }.
 export function stampNextMicrobatch(state) {
   const cfg = state.cfg;
@@ -813,14 +828,14 @@ export function stampNextMicrobatch(state) {
   if (k === null) return { violations: [{ msg: 'need microbatches 0..k-1 fully scheduled, nothing else' }] };
   const w = blockInterval(cfg);
   const plan = new Map([...state.placed.entries()].map(([id, p]) => [id, p.start]));
-  const blockOps = state.ops.filter(o => o.mb === 0)
+  const blockOps = state.ops.filter(o => o.mb === k - 1)
     .map(o => ({ o, start: state.placed.get(o.id).start }))
     .sort((a, b) => a.start - b.start);
   const shoves = [];
   for (const { o, start } of blockOps) {
     const id = opId(o.kind, o.stage, k);
     const op = state.byId.get(id);
-    const target = start + k * w;
+    const target = start + w;
     let t = target;
     // dep floor
     for (const depId of depsOf(cfg, op)) {

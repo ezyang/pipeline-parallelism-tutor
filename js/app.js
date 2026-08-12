@@ -57,6 +57,7 @@ const state = {
   editing: false,          // free-edit mode: invariants may be broken
   plan: null,              // Map(id -> start) while editing
   lifted: null,            // op id currently picked up (edit mode)
+  strandMb: null,          // microbatch strand selected for shifting (edit mode)
   seenEvents: new Set(),
   hoverGhost: null,
   cleared: false,          // this level's goal met this session
@@ -221,6 +222,35 @@ function computeFollowGhosts(sim) {
     out.push({ id: op.id, rank: op.rank, ...site });
   }
   return out;
+}
+
+// Accept one ghost proposal (shared by click and the chase loop).
+function acceptGhost(g) {
+  const sim = state.sim;
+  if (g.mode === 'idle') { fillIdle(g.rank, g.t, g.id); return; }
+  const pad = Array.from({ length: g.t - sim.frontier[g.rank] }, () => ({ rank: g.rank, type: 'idle' }));
+  tryActions([...pad, { rank: g.rank, type: 'op', id: g.id }]);
+}
+
+// Greedily finish microbatch `mb`: keep accepting its ghost proposals until
+// none remain (its ops land at their earliest legal sites, one at a time).
+function chaseMicrobatch(mb) {
+  let placed = 0;
+  for (let guard = 0; guard < 512; guard++) {
+    const ghosts = computeFollowGhosts(state.sim)
+      .filter(g => state.sim.byId.get(g.id).mb === mb)
+      .sort((a, b) => a.t - b.t);
+    if (!ghosts.length) break;
+    const before = state.sim.actions.length;
+    acceptGhost(ghosts[0]);
+    if (state.sim.actions.length === before) break;   // placement failed; stop
+    placed++;
+  }
+  if (placed) {
+    const left = state.sim.ops.filter(o => o.mb === mb && !state.sim.placed.has(o.id)).length;
+    setStatus(`Chased microbatch ${mb}: placed ${placed} op(s)` +
+      (left ? ` — ${left} still blocked on other microbatches.` : ' — strand complete.'));
+  }
 }
 
 function afterChange(action, silent) {
@@ -441,32 +471,23 @@ function renderGrid() {
         lane.appendChild(el);
       }
     }
-    // follow ghosts: ready continuations (chain or next microbatch), clickable.
-    // Single-click accepts the suggestion (frontier sites pad idles; idle-gap
-    // sites go via fillIdle). Double-click rejects it and opens the full
-    // selector for that slot instead.
+    // follow ghosts: ready continuations (chain or next microbatch).
+    // Click: place it, instantly. Double-click: place it AND greedily finish
+    // the rest of that microbatch. Right-click: pick something else instead.
     for (const g of followGhosts.filter(g => g.rank === r)) {
       const op = sim.byId.get(g.id);
       const el = renderItem({ id: g.id, start: g.t, dur: op.dur }, sim, true);
       el.classList.add('ghost', 'follow');
       el.title = `${E.label(op)} is ready — click to place it here (t=${g.t})` +
         (g.mode === 'idle' ? ', filling the idle gap' : '') +
-        `. Double-click to pick something else for this slot.`;
+        `.\nDouble-click: place it and finish microbatch ${op.mb} greedily.` +
+        `\nRight-click: pick something else for this slot.`;
       el.style.cursor = 'pointer';
-      let clickTimer = null;
-      el.onclick = ev => {
-        ev.stopPropagation();
-        if (clickTimer) return;          // second click of a dblclick — ignore
-        clickTimer = setTimeout(() => {
-          clickTimer = null;
-          if (g.mode === 'idle') { fillIdle(r, g.t, g.id); return; }
-          const pad = Array.from({ length: g.t - sim.frontier[r] }, () => ({ rank: r, type: 'idle' }));
-          tryActions([...pad, { rank: r, type: 'op', id: g.id }]);
-        }, 230);
-      };
-      el.ondblclick = ev => {
-        ev.stopPropagation();
-        clearTimeout(clickTimer); clickTimer = null;
+      // first click places instantly; the re-rendered REAL op receives the
+      // second click of a double-click, whose handler runs the chase
+      el.onclick = ev => { ev.stopPropagation(); acceptGhost(g); };
+      el.oncontextmenu = ev => {
+        ev.preventDefault(); ev.stopPropagation();
         if (g.mode === 'idle') openIdlePopover(r, g.t, ev);
         else openPopover(r, g.t, ev);
       };
@@ -609,6 +630,7 @@ function openIdlePopover(r, t, ev) {
 function enterEdit() {
   state.editing = true;
   state.lifted = null;
+  state.strandMb = null;
   state.plan = new Map([...state.sim.placed.entries()].map(([id, p]) => [id, p.start]));
   closePopover(); hideBanner();
   setStatus('✏️ Free edit: click an op to lift it, click a cell to drop it. Invariants may break — fix all violations to finish.');
@@ -617,7 +639,7 @@ function enterEdit() {
 
 function exitEdit(commit) {
   if (!commit) {
-    state.editing = false; state.plan = null; state.lifted = null;
+    state.editing = false; state.plan = null; state.lifted = null; state.strandMb = null;
     setStatus('Edit cancelled — schedule restored.');
     renderAll();
     return;
@@ -631,7 +653,7 @@ function exitEdit(commit) {
   state.sim = E.replay(state.level.cfg, actions);
   state.batches = actions.map(() => 1);
   state.redo = [];
-  state.editing = false; state.plan = null; state.lifted = null;
+  state.editing = false; state.plan = null; state.lifted = null; state.strandMb = null;
   setStatus('✓ Edits applied.');
   afterChange(null, true);
 }
@@ -661,6 +683,18 @@ function editDrop(r, t) {
 function editRemove(opId) {
   state.plan.delete(opId);
   if (state.lifted === opId) state.lifted = null;
+  renderAll();
+}
+
+function shiftStrand(delta) {
+  if (state.strandMb === null) return;
+  const shifted = E.shiftMicrobatch(state.plan, state.sim.byId, state.strandMb, delta);
+  if (!shifted) { setStatus('Can\'t shift earlier — an op would start before t=0.', 'err'); return; }
+  state.plan = shifted;
+  const v = E.planViolations(state.level.cfg, state.plan);
+  setStatus(v.length
+    ? `Strand shifted. ${v.length} violation(s) — keep going or shift back.`
+    : 'Strand shifted. ✓ no violations.');
   renderAll();
 }
 
@@ -705,15 +739,49 @@ function renderEditGrid() {
       el.classList.remove('ghost');
       if (badIds.has(id)) el.classList.add('violation');
       if (state.lifted === id) el.classList.add('lifted');
-      el.title = opTitle(op, sim) + '\n(click to lift/move; shift-click to unplace)';
+      if (state.strandMb === op.mb) el.classList.add('strand');
+      el.title = opTitle(op, sim) +
+        '\n(click: lift/move · shift-click: unplace · double-click: select whole microbatch strand)';
+      let clickTimer = null;
       el.onclick = ev => {
         ev.stopPropagation();
-        if (ev.shiftKey) editRemove(id); else editClickOp(id);
+        if (ev.shiftKey) { editRemove(id); return; }
+        if (clickTimer) return;
+        clickTimer = setTimeout(() => { clickTimer = null; editClickOp(id); }, 230);
+      };
+      el.ondblclick = ev => {
+        ev.stopPropagation();
+        clearTimeout(clickTimer); clickTimer = null;
+        state.lifted = null;
+        state.strandMb = state.strandMb === op.mb ? null : op.mb;
+        renderAll();
       };
       lane.appendChild(el);
     }
     row.appendChild(lane);
     grid.appendChild(row);
+  }
+
+  // strand-shift bar: when a microbatch strand is selected, shift it as a unit
+  if (state.strandMb !== null) {
+    const bar = document.createElement('div');
+    bar.className = 'strandbar';
+    const lbl = document.createElement('span');
+    lbl.textContent = `microbatch ${state.strandMb} strand selected — shift it: `;
+    bar.appendChild(lbl);
+    const mk = (txt, delta) => {
+      const b = document.createElement('button');
+      b.textContent = txt;
+      b.onclick = () => shiftStrand(delta);
+      bar.appendChild(b);
+    };
+    mk('⇤ earlier', -1);
+    mk('later ⇥', +1);
+    const hint = document.createElement('span');
+    hint.className = 'kindlabel';
+    hint.textContent = ' (or ←/→ keys; violations update live; double-click again to deselect)';
+    bar.appendChild(hint);
+    grid.appendChild(bar);
   }
 
   // tray of unplaced ops + violations list
@@ -812,11 +880,22 @@ function renderItem(item, sim, isGhost = false) {
   el.style.borderColor = st.border;
   el.style.color = st.ink;
   el.innerHTML = `<span class="stg">${op.stage}</span>${op.kind}${op.mb}`;
-  el.title = opTitle(op, sim) + '\n(click to rewind to just before this)';
+  el.title = opTitle(op, sim) +
+    `\n(click: rewind to just before this · double-click: greedily finish microbatch ${op.mb})`;
   if (!isGhost) {
     el.onmouseenter = () => traceDeps(op);
     el.onmouseleave = () => clearTrace();
-    el.onclick = ev => { ev.stopPropagation(); rewindTo(op.id); };
+    let clickTimer = null;
+    el.onclick = ev => {
+      ev.stopPropagation();
+      if (clickTimer) return;
+      clickTimer = setTimeout(() => { clickTimer = null; rewindTo(op.id); }, 260);
+    };
+    el.ondblclick = ev => {
+      ev.stopPropagation();
+      clearTimeout(clickTimer); clickTimer = null;
+      chaseMicrobatch(op.mb);
+    };
   }
   return el;
 }
@@ -1446,6 +1525,8 @@ function init() {
   document.addEventListener('keydown', e => {
     if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
     if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.shiftKey ? redo() : undo(); e.preventDefault(); }
+    else if (e.key === 'ArrowLeft' && state.editing && state.strandMb !== null) { shiftStrand(-1); e.preventDefault(); }
+    else if (e.key === 'ArrowRight' && state.editing && state.strandMb !== null) { shiftStrand(1); e.preventDefault(); }
     else if (e.key === 'ArrowDown') { state.selectedRank = Math.min(state.level.cfg.P - 1, state.selectedRank + 1); renderAll(); }
     else if (e.key === 'ArrowUp') { state.selectedRank = Math.max(0, state.selectedRank - 1); renderAll(); }
     else if (e.key === ' ' && featureOn('step')) { autoStep(); e.preventDefault(); }

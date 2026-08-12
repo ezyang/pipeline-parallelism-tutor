@@ -94,12 +94,13 @@
         <h2 style="margin-top:12px">Reference (par) schedule</h2>
         <div style="overflow-x:auto"><div id="comparegrid"></div></div>
       </div>
-      <p class="hint">Click any empty slot to place an op there — gaps before it become idles
-      automatically. After you place an op, the ops it unblocks appear as dashed ghosts —
-      click one to <b>follow the microbatch</b> across ranks. Hover an op to trace dependencies
-      (red = it needs, green = it unblocks); click a placed op to <b>rewind</b> to just before it.
-      The thin bars under each lane are activation memory over time.
-      <kbd>↑</kbd><kbd>↓</kbd> select rank, <kbd>i</kbd> = idle.</p>
+      <p class="hint">Dashed ghosts are ready moves: <b>click</b> places one,
+      <b>double-click</b> places it and greedily finishes that microbatch,
+      <b>right-click</b> picks something else for the slot. Click any empty slot to place
+      there directly (gaps auto-fill with idles). Hover an op to trace dependencies
+      (red = it needs, green = it unblocks); click a placed op to <b>rewind</b> to just
+      before it, double-click it to finish its microbatch. The thin bars above each lane
+      are activation memory over time. <kbd>↑</kbd><kbd>↓</kbd> select rank, <kbd>i</kbd> = idle.</p>
     </div>
     <div class="panel" style="margin-top:14px">
       <h2 id="pickerTitle">Place</h2>
