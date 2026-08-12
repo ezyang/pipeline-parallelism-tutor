@@ -1,6 +1,7 @@
 import * as E from './engine.js';
 import { LEVELS, levelByKey, levelIndex } from './levels.js';
 import { THEMES, cellStyle } from './palettes.js';
+import { downloadSVG } from './export.js';
 
 const $ = id => document.getElementById(id);
 const CELL = 34;
@@ -972,6 +973,7 @@ function renderChrome() {
     `Load your best solution for this level (makespan ${sol.makespan})`;
 
   $('playbtn').disabled = !state.sim.actions.length;
+  $('svgbtn').disabled = !state.sim.actions.length;
   $('logPanel').style.display = $('log').childElementCount ? '' : 'none';
 }
 
@@ -1232,6 +1234,12 @@ function init() {
   $('critbtn').onclick = toggleCrit;
   $('comparebtn').onclick = toggleCompare;
   $('playbtn').onclick = togglePlayback;
+  $('svgbtn').onclick = () => {
+    const cfg = state.sim.cfg;
+    downloadSVG(state.sim, { theme: state.theme, mode: state.mode,
+      title: `P=${cfg.P} V=${cfg.V} M=${cfg.M} (${cfg.model})` });
+    setStatus('⤓ SVG downloaded — drop it straight into slides or a paper.');
+  };
   $('sharebtn').onclick = async () => {
     try {
       await navigator.clipboard.writeText(location.href);
