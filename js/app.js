@@ -1127,17 +1127,36 @@ function renderChrome() {
 function stampCurrentBlock() {
   const mb = E.soleMicrobatch(state.sim);
   if (mb === null) return;
-  const bs = E.blockStats(state.sim, mb);
-  const res = E.stampBlock(state.sim, mb);
+  let sim = state.sim;
+  let res = E.stampBlock(sim, mb);
+  let squeezed = false;
+  if (res.violations && res.violations.some(v => /overlaps/.test(v.msg))) {
+    // the paper's repair: keep the op order, re-time so each rank's ops land
+    // on distinct residues mod w, then try again
+    const sq = E.squeezeBlock(sim, mb);
+    if (sq) {
+      const sim2 = E.replay(state.level.cfg, E.planToActions(state.level.cfg, sq));
+      const res2 = E.stampBlock(sim2, mb);
+      if (res2.actions) { sim = sim2; res = res2; squeezed = true; }
+    }
+  }
   if (res.violations) {
     setStatus(`⧉ This block doesn't tile: ${res.violations[0].msg}`, 'err');
     return;
   }
+  const bs = E.blockStats(sim, mb);
   state.sim = E.replay(state.level.cfg, res.actions);
   state.batches = res.actions.map(() => 1);
   state.redo = [];
-  log(`Stamped microbatch ${mb}'s block across all ${state.sim.cfg.M} microbatches ` +
-      `(interval ${bs.w}, predicted peak ${bs.peak.join('/')}).`, 'event');
+  if (squeezed) {
+    log(`Your block overlapped itself when repeated every ${bs.w} slots, so it was ` +
+        `"squeezed" first: same op order, ops nudged later so each rank's ops land on ` +
+        `distinct time-residues mod ${bs.w}. Then stamped ×${state.sim.cfg.M}.`, 'event');
+    setStatus(`⧉ Block squeezed (re-timed to tile), then stamped. Compare with par (⇵) to see what the re-timing cost.`);
+  } else {
+    log(`Stamped microbatch ${mb}'s block across all ${state.sim.cfg.M} microbatches ` +
+        `(interval ${bs.w}, predicted peak ${bs.peak.join('/')}).`, 'event');
+  }
   afterChange(null, true);
   $('logPanel').style.display = $('log').childElementCount ? '' : 'none';
 }

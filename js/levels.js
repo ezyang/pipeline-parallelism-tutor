@@ -85,11 +85,13 @@ down ranks 0→3, chunk 1 runs back UP 3→0. So rank 0 has stages 0 and 7,
 and rank 3 has 3 and 4 — a microbatch bounces off the pipe ends, and at
 each bounce the next stage is on the SAME rank (no communication hop).
 This is the placement ZB-V and DualPipe use. Follow microbatch 0's ghosts
-and watch the V shape draw itself; the depth-first chase you already know
-is near-optimal here. 128 ops — block-stamp a single microbatch (a real
-tiling puzzle: each rank's ops must land on distinct residues mod w=4), or
-run-until-strange and steer. Sandbox offers the classic Megatron "wrap"
-placement for comparison — the V beats it here (38 vs 43).`,
+and watch the V shape draw itself, then ⧉ stamp: your tight block overlaps
+itself when repeated every w=4 slots, so the stamp will "squeeze" it first —
+same op order, ops nudged later so each rank's ops land on distinct
+time-residues mod 4 (the tiling condition). That legal-but-loose result
+loses to par (47 vs 38): uniform repetition isn't optimal here, which is
+exactly why real V schedules stagger the warmup. Compare with par (⇵) to
+see the difference, or run-until-strange and steer.`,
   },
   {
     key: 'b-twice-f',

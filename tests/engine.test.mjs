@@ -274,3 +274,28 @@ test('V placement: chunks bounce off ends; depth-first reference beats wrap', ()
   const flat = E.referenceSchedule({ P: 4, V: 1, M: 8, model: '11', cap: 4 });
   assert.strictEqual(flat.score.makespan, 22);
 });
+
+test('squeezeBlock repairs a depth-first V-placement block into a tiling one', () => {
+  const cfg = { P: 4, V: 2, M: 8, model: '11', cap: 8 };
+  const acts = [];
+  const frontier = [0, 0, 0, 0];
+  let t = 0;
+  const chain = [];
+  for (let s = 0; s < 8; s++) chain.push(['F', s]);
+  for (let s = 7; s >= 0; s--) chain.push(['B', s]);
+  for (const [k, s] of chain) {
+    const r = E.stageRank(cfg, s);
+    while (frontier[r] < t) { acts.push({ rank: r, type: 'idle' }); frontier[r]++; }
+    acts.push({ rank: r, type: 'op', id: E.opId(k, s, 0) });
+    frontier[r]++; t++;
+  }
+  const sim = E.replay(cfg, acts);
+  assert.ok(E.stampBlock(sim, 0).violations);      // raw block overlaps
+  const sq = E.squeezeBlock(sim, 0);
+  assert.ok(sq);
+  const sim2 = E.replay(cfg, E.planToActions(cfg, sq));
+  const res = E.stampBlock(sim2, 0);
+  assert.ok(res.actions);
+  const full = E.replay(cfg, res.actions);
+  assert.ok(E.isDone(full));
+});

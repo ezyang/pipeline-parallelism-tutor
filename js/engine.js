@@ -759,6 +759,38 @@ export function blockStats(state, mb) {
   return { w, perRank: stats, peak: stats.map(s => s.peak) };
 }
 
+// Squeeze the block (the paper's repair step): keep the op ORDER of the
+// user's block but re-time it minimally so each rank's ops land on distinct
+// residues mod w — the necessary and sufficient condition for the block to
+// tile at interval w without overlap. Returns a new plan or null.
+export function squeezeBlock(state, mb) {
+  const cfg = state.cfg;
+  const w = blockInterval(cfg);
+  const ops = [...state.placed.entries()]
+    .map(([id, p]) => ({ op: state.byId.get(id), start: p.start }))
+    .sort((a, b) => a.start - b.start);
+  const plan = new Map();
+  const used = Array.from({ length: cfg.P }, () => new Set());
+  for (const { op } of ops) {
+    let t = 0;
+    for (const depId of depsOf(cfg, op)) {
+      const dep = state.byId.get(depId);
+      if (plan.has(depId)) t = Math.max(t, plan.get(depId) + dep.dur);
+    }
+    const r = op.rank;
+    const fits = tt => {
+      for (let d = 0; d < op.dur; d++) if (used[r].has((tt + d) % w)) return false;
+      return true;
+    };
+    let guard = 0;
+    while (!fits(t) && guard++ < 4 * w) t++;
+    if (!fits(t)) return null;    // rank already saturated (shouldn't happen)
+    plan.set(op.id, t);
+    for (let d = 0; d < op.dur; d++) used[r].add((t + d) % w);
+  }
+  return planViolations(cfg, plan).length ? null : plan;
+}
+
 // Stamp the block: replicate every placed op for all other microbatches,
 // shifted by (mb' - mb) * w. Returns {actions} on success or {violations}.
 export function stampBlock(state, mb) {
