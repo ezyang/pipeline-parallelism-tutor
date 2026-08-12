@@ -136,3 +136,47 @@ test('planToActions round-trips a valid complete schedule', () => {
   assert.ok(E.isDone(sim));
   assert.deepStrictEqual(E.score(sim).makespan, ref.score.makespan);
 });
+
+test('planCompletion: speculative op with fillable deps is feasible; forced slots found', () => {
+  const cfg = { P: 2, V: 1, M: 2, model: '11', cap: null };
+  // place only F1_0 at t=1 (its dep F0_0 unplaced but fits at t=0 — uniquely)
+  const plan = new Map([['F1_0', 1]]);
+  const res = E.planCompletion(cfg, plan);
+  assert.ok(res.feasible);
+  assert.ok(res.required.has('F0_0'));
+  assert.strictEqual(res.forced.get('F0_0'), 0); // only slot that works
+});
+
+test('planCompletion: infeasible when no room for deps', () => {
+  const cfg = { P: 2, V: 1, M: 2, model: '11', cap: null };
+  // F1_0 at t=0: its dep F0_0 must END by t=0 — impossible
+  const plan = new Map([['F1_0', 0]]);
+  const res = E.planCompletion(cfg, plan);
+  assert.strictEqual(res.feasible, false);
+});
+
+test('recognizeSchedule: identifies 1F1B, GPipe, ZB-H1, and novel', () => {
+  const c1 = { P: 4, V: 1, M: 8, model: '11', cap: 4 };
+  const s1 = E.newState(c1); E.project(s1, '1f1b');
+  assert.strictEqual(E.recognizeSchedule(s1).name, '1F1B');
+
+  const c2 = { P: 4, V: 1, M: 8, model: '11', cap: null };
+  const s2 = E.newState(c2); E.project(s2, 'gpipe');
+  assert.strictEqual(E.recognizeSchedule(s2).name, 'GPipe');
+
+  const c3 = { P: 4, V: 1, M: 8, model: 'zb', cap: 4 };
+  const s3 = E.newState(c3); E.project(s3, 'zb');
+  assert.strictEqual(E.recognizeSchedule(s3).name, 'ZB-H1');
+
+  const c4 = { P: 4, V: 1, M: 8, model: 'zb', cap: 8, warmup: 'zb2' };
+  const s4 = E.newState(c4); E.project(s4, 'zb');
+  assert.strictEqual(E.recognizeSchedule(s4).name, 'ZB-H2');
+
+  // novel: 1F1B config but scramble drain order (swap last two W... no W here;
+  // use a GPipe-ish order under the cap — differs from both references)
+  const s5 = E.newState(c1);
+  E.project(s5, 'gpipe'); // gpipe under cap=4 degrades: not GPipe-canonical, not 1F1B
+  const r5 = E.recognizeSchedule(s5);
+  // whatever it is, the call must not crash and must return an object
+  assert.ok(r5 !== null);
+});

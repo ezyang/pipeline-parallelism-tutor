@@ -211,7 +211,9 @@ const KIND_ORDER = {
 export const POLICIES = {
   'gpipe': { name: 'Forwards first (GPipe)', order: KIND_ORDER['gpipe'] },
   '1f1b':  { name: 'Backward-first (1F1B)', order: KIND_ORDER['1f1b'], quota: true },
+  '1f1b-eager': { name: 'Backward-first, eager warmup', order: KIND_ORDER['1f1b'] },
   'zb':    { name: 'B > F > W (zero-bubble)', order: KIND_ORDER['zb'], quota: true },
+  'zb-eager': { name: 'B > F > W, eager warmup', order: KIND_ORDER['zb'] },
 };
 
 // Non-eager warmup: max in-flight forwards a rank keeps under 1F1B-style
@@ -414,6 +416,203 @@ export function planViolations(cfg, plan) {
   return out;
 }
 
+// Speculative placement support. A plan may contain ops whose deps are
+// missing or late; `planCompletion` decides whether the holes can be filled.
+//
+// Returns { feasible, required, witness, forced }:
+//   required — transitive unplaced deps of placed ops, with [earliest, latestStart] windows
+//   witness  — a concrete violation-free assignment for all required ops (if feasible)
+//   forced   — Map(id -> start) of required ops with exactly ONE feasible slot,
+//              closed under fixpoint (placing forced ops may force more)
+// Memory caps are NOT considered here (they depend on global order); the final
+// merge still validates them.
+
+export function planCompletion(cfg, plan) {
+  const probe = newState(cfg);
+  const need = new Map();   // id -> {op, earliest, latestStart}
+  const queue = [...plan.keys()];
+  while (queue.length) {
+    const id = queue.pop();
+    for (const depId of depsOf(cfg, probe.byId.get(id))) {
+      if (plan.has(depId) || need.has(depId)) continue;
+      need.set(depId, { op: probe.byId.get(depId), earliest: 0, latestStart: Infinity });
+      queue.push(depId);
+    }
+  }
+  if (!need.size) return { feasible: true, required: need, witness: new Map(), forced: new Map() };
+
+  // topological order over required ops (deps first)
+  const order = [];
+  const seen = new Set();
+  const visit = id => {
+    if (seen.has(id) || !need.has(id)) return;
+    seen.add(id);
+    for (const d of depsOf(cfg, probe.byId.get(id))) visit(d);
+    order.push(id);
+  };
+  for (const id of need.keys()) visit(id);
+
+  const dependentsOf = id => {
+    const out = [];
+    for (const cand of [...plan.keys(), ...need.keys()]) {
+      if (depsOf(cfg, probe.byId.get(cand)).includes(id)) out.push(cand);
+    }
+    return out;
+  };
+
+  const propagate = () => {
+    for (const id of order) {                     // earliest: forward pass
+      const n = need.get(id);
+      n.earliest = 0;
+      for (const d of depsOf(cfg, n.op)) {
+        const fin = plan.has(d) ? plan.get(d) + probe.byId.get(d).dur
+                  : need.has(d) ? need.get(d).earliest + probe.byId.get(d).dur : 0;
+        n.earliest = Math.max(n.earliest, fin);
+      }
+    }
+    for (let i = order.length - 1; i >= 0; i--) { // latest: backward pass
+      const id = order[i];
+      const n = need.get(id);
+      n.latestStart = Infinity;
+      for (const x of dependentsOf(id)) {
+        const startX = plan.has(x) ? plan.get(x)
+                     : need.get(x).latestStart;
+        n.latestStart = Math.min(n.latestStart, startX - n.op.dur);
+      }
+    }
+    return [...need.values()].every(n => n.earliest <= n.latestStart);
+  };
+  if (!propagate()) return { feasible: false, required: need };
+
+  // free slots: any t not occupied by a plan op on that rank
+  const occupied = r => {
+    const s = new Set();
+    for (const [id, start] of plan) {
+      const op = probe.byId.get(id);
+      if (op.rank === r) for (let d = 0; d < op.dur; d++) s.add(start + d);
+    }
+    return s;
+  };
+  const fits = (occ, t, dur) => {
+    for (let d = 0; d < dur; d++) if (occ.has(t + d)) return false;
+    return true;
+  };
+  const slotsFor = (n, occ) => {
+    const out = [];
+    for (let t = n.earliest; t <= n.latestStart; t++) if (fits(occ, t, n.op.dur)) out.push(t);
+    return out;
+  };
+
+  // greedy witness: per rank, earliest-deadline-first into earliest free slot,
+  // then verify the witness has no dep violations (retry once with updated
+  // earliest bounds if the greedy pass introduced lateness)
+  const buildWitness = () => {
+    const w = new Map();
+    const occs = Array.from({ length: cfg.P }, (_, r) => occupied(r));
+    const byRank = Array.from({ length: cfg.P }, () => []);
+    for (const n of need.values()) byRank[n.op.rank].push(n);
+    for (let r = 0; r < cfg.P; r++) {
+      byRank[r].sort((a, b) => a.latestStart - b.latestStart || a.earliest - b.earliest);
+      for (const n of byRank[r]) {
+        const slot = slotsFor(n, occs[r])[0];
+        if (slot === undefined) return null;
+        w.set(n.op.id, slot);
+        for (let d = 0; d < n.op.dur; d++) occs[r].add(slot + d);
+      }
+    }
+    return w;
+  };
+  let witness = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const w = buildWitness();
+    if (!w) break;
+    const full = new Map([...plan, ...w]);
+    const bad = planViolations(cfg, full).filter(v => v.code !== 'memory');
+    if (!bad.length) { witness = w; break; }
+    // tighten earliest bounds from the witness's dep-late findings and retry
+    let changed = false;
+    for (const v of bad) {
+      if (v.code === 'dep-late' && need.has(v.id)) {
+        const n = need.get(v.id);
+        const dep = probe.byId.get(v.dep);
+        const fin = (full.get(v.dep) ?? 0) + dep.dur;
+        if (fin > n.earliest) { n.earliest = fin; changed = true; }
+      }
+    }
+    if (!changed || ![...need.values()].every(n => n.earliest <= n.latestStart)) break;
+  }
+  if (!witness) return { feasible: false, required: need };
+
+  // forced fixpoint: required ops with exactly one feasible slot
+  const forced = new Map();
+  const fplan = new Map(plan);
+  let changedF = true;
+  while (changedF) {
+    changedF = false;
+    // recompute windows against fplan
+    const sub = planCompletionWindows(cfg, fplan, probe);
+    if (!sub) break;
+    for (const [id, n] of sub) {
+      if (fplan.has(id)) continue;
+      const occ = new Set();
+      for (const [pid, pstart] of fplan) {
+        const pop = probe.byId.get(pid);
+        if (pop.rank === n.op.rank) for (let d = 0; d < pop.dur; d++) occ.add(pstart + d);
+      }
+      const slots = slotsFor(n, occ);
+      if (slots.length === 1) {
+        forced.set(id, slots[0]);
+        fplan.set(id, slots[0]);
+        changedF = true;
+      }
+    }
+  }
+  return { feasible: true, required: need, witness, forced };
+}
+
+// window computation helper shared by the forced-fixpoint loop
+function planCompletionWindows(cfg, plan, probe) {
+  const need = new Map();
+  const queue = [...plan.keys()];
+  while (queue.length) {
+    const id = queue.pop();
+    for (const depId of depsOf(cfg, probe.byId.get(id))) {
+      if (plan.has(depId) || need.has(depId)) continue;
+      need.set(depId, { op: probe.byId.get(depId), earliest: 0, latestStart: Infinity });
+      queue.push(depId);
+    }
+  }
+  const order = [];
+  const seen = new Set();
+  const visit = id => {
+    if (seen.has(id) || !need.has(id)) return;
+    seen.add(id);
+    for (const d of depsOf(cfg, probe.byId.get(id))) visit(d);
+    order.push(id);
+  };
+  for (const id of need.keys()) visit(id);
+  for (const id of order) {
+    const n = need.get(id);
+    for (const d of depsOf(cfg, n.op)) {
+      const fin = plan.has(d) ? plan.get(d) + probe.byId.get(d).dur
+                : need.has(d) ? need.get(d).earliest + probe.byId.get(d).dur : 0;
+      n.earliest = Math.max(n.earliest, fin);
+    }
+  }
+  const allIds = [...plan.keys(), ...need.keys()];
+  for (let i = order.length - 1; i >= 0; i--) {
+    const id = order[i];
+    const n = need.get(id);
+    for (const cand of allIds) {
+      if (!depsOf(cfg, probe.byId.get(cand)).includes(id)) continue;
+      const startX = plan.has(cand) ? plan.get(cand) : need.get(cand).latestStart;
+      n.latestStart = Math.min(n.latestStart, startX - n.op.dur);
+    }
+    if (n.earliest > n.latestStart) return null;
+  }
+  return need;
+}
+
 // Canonicalize a valid, complete-or-partial plan back to an action list
 // (per-rank time order, gaps filled with idles). Throws on overlap.
 export function planToActions(cfg, plan) {
@@ -478,4 +677,51 @@ export function referenceSchedule(cfg) {
   const s = newState(cfg);
   const { done, deadlock } = project(s, referencePolicy(cfg));
   return { state: s, done, deadlock, score: score(s) };
+}
+
+// --- Schedule recognition ---------------------------------------------------
+// Compare a completed schedule against canonical schedules from the literature
+// (each = a policy projection, possibly with modified cfg). Matching is up to
+// per-rank op ORDER (start times can differ) — order is what defines a named
+// schedule; exact slots depend on idle placement.
+
+function rankOrders(state) {
+  return state.rows.map(row => row.filter(it => it.id).map(it => it.id).join(' '));
+}
+
+function sameOrder(a, b) {
+  const oa = rankOrders(a), ob = rankOrders(b);
+  return oa.length === ob.length && oa.every((x, i) => x === ob[i]);
+}
+
+export function recognizeSchedule(state) {
+  if (!isDone(state)) return null;
+  const cfg = state.cfg;
+  const candidates = [];
+  const zb = cfg.model === 'zb';
+  const push = (name, note, policy, cfg2) => {
+    try {
+      const s = newState(cfg2 ?? cfg);
+      if (!project(s, policy).done) return;
+      candidates.push({ name, note, state: s });
+    } catch { /* candidate not constructible for this cfg */ }
+  };
+  if (!zb) {
+    push('GPipe', 'all forwards, then all backwards (Huang et al. 2019)', 'gpipe');
+    push(cfg.V > 1 ? 'Interleaved 1F1B (Megatron VPP)' : '1F1B',
+      cfg.V > 1 ? 'Narayanan et al. 2021 — interleaved stages' : 'one-forward-one-backward (PipeDream-Flush / Megatron)',
+      '1f1b');
+    push('1F1B (eager warmup)', '1F1B order but admitting forwards greedily in warmup', '1f1b-eager');
+  } else {
+    const std = { ...cfg }; delete std.warmup;   // pin warmup per candidate
+    push('ZB-H2', 'zero-bubble with doubled warmup, ~2P memory (Qi et al. 2023)', 'zb',
+      { ...cfg, warmup: 'zb2' });
+    push('ZB-H1', 'zero-bubble handcrafted schedule, 1F1B memory (Qi et al. 2023)', 'zb', std);
+    push('ZB-H1 (eager warmup)', 'zero-bubble greedy with eager warmup', 'zb-eager', std);
+    push('GPipe (F/B/W split)', 'all F, then all B, then W filler', 'gpipe', std);
+  }
+  for (const c of candidates) if (sameOrder(state, c.state)) {
+    return { name: c.name, note: c.note, exact: score(state).makespan === score(c.state).makespan };
+  }
+  return { name: null };
 }

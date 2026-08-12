@@ -24,6 +24,12 @@ const store = {
   set progress(v) { localStorage.setItem('ppt-progress', v); },
   get unlockAll() { return localStorage.getItem('ppt-unlock-all') === '1'; },
   set unlockAll(v) { localStorage.setItem('ppt-unlock-all', v ? '1' : '0'); },
+  // best saved solution per level: {actions, makespan, internalBubble}
+  solution(key) {
+    try { return JSON.parse(localStorage.getItem('ppt-sol-' + key)); }
+    catch { return null; }
+  },
+  saveSolution(key, sol) { localStorage.setItem('ppt-sol-' + key, JSON.stringify(sol)); },
 };
 
 function maxReached() {
@@ -95,6 +101,11 @@ function loadLevel(level, actions = []) {
   setStatus('');
   logClear();
   saveHash();
+  if (E.isDone(state.sim)) {
+    const s = E.score(state.sim);
+    state.cleared = goalMet(s);
+    showBanner(state.cleared, s);
+  }
   renderAll();
 }
 
@@ -171,6 +182,14 @@ function afterChange(action, silent) {
       state.cleared = true;
       const idx = levelIndex(state.level.key);
       if (idx >= store.progress) store.progress = idx + 1;
+    }
+    if (won) {
+      const prev = store.solution(state.level.key);
+      if (!prev || s.makespan < prev.makespan ||
+          (s.makespan === prev.makespan && s.internalBubble < prev.internalBubble)) {
+        store.saveSolution(state.level.key, {
+          actions: sim.actions, makespan: s.makespan, internalBubble: s.internalBubble });
+      }
     }
     showBanner(won, s);
     log(`Schedule complete: makespan ${s.makespan}, bubble ${pct(s.bubble)}, ` +
@@ -588,11 +607,37 @@ function renderEditGrid() {
 
   const vlist = document.createElement('div');
   vlist.className = 'violations';
-  vlist.innerHTML = viol.length
-    ? `<b>${viol.length} violation(s):</b><br>` +
+  if (!viol.length) {
+    vlist.innerHTML = '<b class="beat">✓ no violations</b> — press "finish editing" to apply.';
+  } else {
+    // are the violations repairable by placing more ops? (dep problems only)
+    const depOnly = viol.every(v => v.code === 'dep-missing' || v.code === 'dep-late');
+    vlist.innerHTML =
+      `<b>${viol.length} violation(s):</b><br>` +
       viol.slice(0, 8).map(v => `• ${v.msg}`).join('<br>') +
-      (viol.length > 8 ? `<br>…and ${viol.length - 8} more` : '')
-    : '<b class="beat">✓ no violations</b> — press "finish editing" to apply.';
+      (viol.length > 8 ? `<br>…and ${viol.length - 8} more` : '');
+    if (depOnly) {
+      const comp = E.planCompletion(cfg, plan);
+      const line = document.createElement('div');
+      if (comp.feasible) {
+        line.innerHTML = `<b class="beat">…but fixable:</b> the missing dependencies fit in the blanks. `;
+        if (comp.forced.size) {
+          const a = document.createElement('a');
+          a.href = '#';
+          a.textContent = `${comp.forced.size} op(s) have exactly one legal slot — autofill them`;
+          a.onclick = ev => {
+            ev.preventDefault();
+            for (const [id, t] of comp.forced) state.plan.set(id, t);
+            renderAll();
+          };
+          line.appendChild(a);
+        }
+      } else {
+        line.innerHTML = `<b>…and NOT fixable:</b> the missing deps can't fit in the remaining blanks. Something must move.`;
+      }
+      vlist.appendChild(line);
+    }
+  }
   grid.appendChild(vlist);
 }
 
@@ -892,6 +937,11 @@ function renderChrome() {
   lsel.value = cur;
   vis('cfgrow', cur === 'custom');
   vis('unlockall', !store.unlockAll);
+
+  const sol = store.solution(state.level.key);
+  vis('loadsol', !!sol);
+  if (sol) $('loadsol').title =
+    `Load your best solution for this level (makespan ${sol.makespan})`;
 }
 
 // --- banner / status -------------------------------------------------------------
@@ -903,11 +953,16 @@ function showBanner(won, s) {
   b.className = won ? 'banner won' : 'banner missed';
   b.style.display = '';
   const parM = state.ref.score.makespan;
+  // which schedule from the literature is this?
+  const rec = E.recognizeSchedule(state.sim);
+  const recMsg = rec?.name
+    ? ` You built <b>${rec.name}</b> — ${rec.note}.`
+    : ` This op ordering doesn't match any schedule in our library — it's yours. 🧪`;
   let msg;
   if (won) {
     msg = `🎉 <b>Level cleared!</b> Makespan ${s.makespan}` +
       (state.level.goal === 'internal0' ? `, internal bubble ${pct(s.internalBubble)}` :
-       s.makespan <= parM ? ` — matched par` : '');
+       s.makespan <= parM ? ` — matched par` : '') + '.' + recMsg;
   } else if (state.level.goal === 'internal0') {
     msg = `✅ Complete, but internal bubble is ${pct(s.internalBubble)} — the goal is 0%. ` +
       `Find the gaps (hatched slots between a rank's first and last op) and fill them with W ops.`;
@@ -1012,6 +1067,10 @@ function init() {
   $('autorun').onclick = autoRunUntilStrange;
   $('projectbtn').onclick = projectRest;
   $('unlockall').onclick = () => { store.unlockAll = true; renderChrome(); };
+  $('loadsol').onclick = () => {
+    const sol = store.solution(state.level.key);
+    if (sol) loadLevel(state.level, sol.actions);
+  };
   $('editbtn').onclick = enterEdit;
   $('editdone').onclick = () => exitEdit(true);
   $('editcancel').onclick = () => exitEdit(false);
