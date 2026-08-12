@@ -1,7 +1,7 @@
 // Papers referenced by levels and by schedule recognition.
 export const PAPERS = {
   gpipe: { label: 'GPipe (Huang et al. 2019)', url: 'https://arxiv.org/abs/1811.06965' },
-  pipedream: { label: 'PipeDream 1F1B (Narayanan et al. 2019)', url: 'https://arxiv.org/abs/1806.03377' },
+  pipedream: { label: 'PipeDream 1F1B (Harlap et al. 2018)', url: 'https://arxiv.org/abs/1806.03377' },
   pipedreamFlush: { label: 'PipeDream-Flush (Narayanan et al. 2021)', url: 'https://arxiv.org/abs/2006.09503' },
   megatron: { label: 'Megatron interleaved 1F1B (Narayanan et al. 2021)', url: 'https://arxiv.org/abs/2104.04473' },
   zb: { label: 'Zero Bubble Pipeline Parallelism (Qi et al. 2023)', url: 'https://arxiv.org/abs/2401.10241' },
