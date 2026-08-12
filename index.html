@@ -13,11 +13,11 @@
   <label class="ctl">level
     <select id="levelsel"></select>
   </label>
-  <label class="ctl" id="assistwrap">assist
+  <label class="ctl" id="assistwrap" title="How much help you want. None of these are cheating — they change what you see, not what counts as a win.">assist
     <select id="assistsel">
-      <option value="none">validate only</option>
-      <option value="ready" selected>show ready set</option>
-      <option value="coach">coach (policy hints)</option>
+      <option value="none">hard: no hints, errors only</option>
+      <option value="ready" selected>normal: dim ops that can't run yet</option>
+      <option value="coach">coach: suggest moves + preview consequences</option>
     </select>
   </label>
   <label class="ctl" id="themewrap">colors
@@ -36,10 +36,10 @@
     <button id="editcancel" style="display:none">✕ cancel edit</button>
   </span>
   <span class="btngroup">
-    <button id="hintbtn" title="Highlight what the standard policy would do next (doesn't place it)">💡 hint</button>
-    <button id="autostep" title="Space — place one policy step on the selected rank">step ▸</button>
-    <button id="autorun" title="Run the policy until something strange happens (tie, bubble, phase change)">run until strange ▸▸</button>
-    <button id="projectbtn" class="primary" title="Finish the schedule with the standard policy (this is what par measures)">solve ⏭</button>
+    <button id="hintbtn" title="Tell me the standard move (pulses it in the picker; you still place it)">💡 hint</button>
+    <button id="autostep" title="Place the standard move for me — one op on the selected rank (Space). Refuses when there's a genuine choice.">step ▸</button>
+    <button id="autorun" title="Keep placing standard moves on all ranks until something interesting happens (a real choice, a bubble, a phase change), then stop and hand back control. Great for grinding through warmup.">run until strange ▸▸</button>
+    <button id="projectbtn" class="primary" title="Give up and finish the whole schedule with the standard policy (this is what par measures)">solve ⏭</button>
   </span>
   <span class="btngroup">
     <button id="playbtn" title="Animate the schedule: watch what each rank is doing as time advances" disabled>▶ play</button>

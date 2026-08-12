@@ -50,11 +50,14 @@ speed yet. (Watch the memory strips above each lane fill and drain.)`,
     policy: '1f1b',
     goal: 'par',
     blurb: `Level 3 forced you to interleave; this level asks for the RIGHT
-interleaving. The classic: warmup, rank r admits P−r forwards. Steady state:
-alternate one forward, one backward. Drain: finish the backwards. Par is
-makespan 22 with bubble 3/11 — exactly the Megatron paper figure. Don't let
-a microbatch's forward lag, or you'll pay for it as a bubble when its
-backward comes due. New tools: the coach (assist menu) and step ▸.`,
+interleaving: warmup (rank r admits P−r forwards), then strictly alternate
+one forward, one backward. Par is makespan 22 — exactly the Megatron paper
+figure. 64 ops is a lot of clicking, so you've unlocked power tools, in
+order of how much they do for you: 💡 hint tells you the standard move,
+step ▸ places it, and run-until-strange ▸▸ keeps placing it until something
+interesting happens (a real choice, a bubble, a phase change) and stops.
+Suggested play: do warmup and a few steady-state rounds by hand until you
+feel the rhythm, then let ▸▸ grind and take over at the interesting bits.`,
   },
   {
     key: 'b-twice-f',

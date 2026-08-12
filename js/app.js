@@ -13,10 +13,10 @@ const CELL = 34;
 const FEATURE_AT = {
   scoreboard: 1,   // pipelining level introduces bubble/par
   theme: 1,
-  assist: 3,       // 1F1B introduces the coach + validate-only mode
-  step: 3,         // hint button
-  autorun: 4,      // B=2F: warmup is tedious, earn the fast-forward
-  project: 4,      // solve button
+  assist: 3,       // 1F1B introduces the coach + the full power-tool set:
+  step: 3,         // 64 ops is fun to place by hand exactly once
+  autorun: 3,
+  project: 4,      // solve stays one level later — it skips the whole puzzle
   custom: 3,       // sandbox settings
 };
 
@@ -236,13 +236,27 @@ function redo() {
 }
 
 function autoStep() {
-  const pick = E.policyPick(state.sim, state.selectedRank, state.level.policy);
-  if (!pick) { setStatus('This rank is finished.'); return; }
+  // act on the earliest-frontier unfinished rank — "do the next thing",
+  // regardless of which rank happens to be selected
+  let rank = -1, best = Infinity;
+  for (let r = 0; r < state.sim.cfg.P; r++) {
+    if (E.pendingOps(state.sim, r).length && state.sim.frontier[r] < best) {
+      best = state.sim.frontier[r]; rank = r;
+    }
+  }
+  if (rank < 0) { setStatus('Schedule is complete.'); return; }
+  const pick = E.policyPick(state.sim, rank, state.level.policy);
   if (pick.tie) {
-    setStatus('⚖️ Genuine tie — the policy has no preference here. Your call.');
+    state.selectedRank = rank;
+    renderAll();
+    setStatus(`⚖️ Genuine choice on rank ${rank} — the policy has no preference. Your call.`);
     return;
   }
-  tryAction(pick.action);
+  const op = pick.action.type === 'op' ? state.sim.byId.get(pick.action.id) : null;
+  if (tryAction(pick.action)) {
+    setStatus(op ? `step: placed ${E.label(op)} on rank ${rank}.`
+                 : `step: rank ${rank} idles (nothing ready).`);
+  }
 }
 
 function autoRunUntilStrange() {
@@ -839,18 +853,26 @@ function closePopover() {
 
 // Hint: pulse the coach's pick in the picker/popover without placing it.
 function showHint() {
-  const pick = E.policyPick(state.sim, state.selectedRank, state.level.policy);
-  if (!pick) { setStatus('This rank is finished — pick another rank.'); return; }
+  // hint about the earliest-frontier rank (same target as step ▸)
+  let rank = -1, best = Infinity;
+  for (let r = 0; r < state.sim.cfg.P; r++) {
+    if (E.pendingOps(state.sim, r).length && state.sim.frontier[r] < best) {
+      best = state.sim.frontier[r]; rank = r;
+    }
+  }
+  if (rank < 0) { setStatus('Schedule is complete.'); return; }
+  if (rank !== state.selectedRank) { state.selectedRank = rank; renderAll(); }
+  const pick = E.policyPick(state.sim, rank, state.level.policy);
   if (pick.tie) {
     setStatus('⚖️ Genuine tie — several moves are equally standard here. Your call.');
     return;
   }
   if (pick.action.type === 'idle') {
-    setStatus('Hint: nothing is ready on this rank — place an idle.');
+    setStatus(`Hint: nothing is ready on rank ${rank} — place an idle (or click a later slot).`);
     return;
   }
   const op = state.sim.byId.get(pick.action.id);
-  setStatus(`Hint: run ${E.label(op)} (${E.POLICIES[state.level.policy].name}).`);
+  setStatus(`Hint: run ${E.label(op)} on rank ${rank} (${E.POLICIES[state.level.policy].name}).`);
   document.querySelectorAll(`.opbtn[data-opid="${CSS.escape(op.id)}"]`).forEach(el => {
     el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse');
   });
