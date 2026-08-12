@@ -686,10 +686,28 @@ function editRemove(opId) {
   renderAll();
 }
 
-// --- edit-mode dragging -------------------------------------------------------
+// --- dragging -------------------------------------------------------------------
 // Grab an op and slide it along its lane; snaps per slot, plan and violations
-// update live. If the op belongs to the selected strand, the strand slides.
+// update live (ripple physics). Works in edit mode directly; in normal mode a
+// drag is "armed" on pointerdown and entering it (8px of motion) switches to
+// edit mode seamlessly.
 let editDrag = null;   // {id, startX, origPlan, strand, lastDelta, moved}
+let armedDrag = null;  // {op, startX, startY} — normal-mode pointerdown
+
+function armDrag(op, ev) {
+  armedDrag = { op, startX: ev.clientX, startY: ev.clientY };
+}
+
+function maybeStartArmedDrag(ev) {
+  if (!armedDrag || editDrag) return;
+  if (Math.abs(ev.clientX - armedDrag.startX) < 8 &&
+      Math.abs(ev.clientY - armedDrag.startY) < 8) return;
+  const op = armedDrag.op;
+  enterEdit();
+  setStatus('✏️ Dragging switched you into edit mode — drop the op, keep editing, then "finish editing" to apply.');
+  beginEditDrag(op, { clientX: armedDrag.startX });
+  armedDrag = null;
+}
 
 function beginEditDrag(op, ev) {
   editDrag = {
@@ -903,19 +921,35 @@ function renderEditGrid() {
   grid.appendChild(vlist);
 }
 
-// Rewind: truncate history to just before the action that placed `opId`.
-function rewindTo(opId) {
-  const acts = state.sim.actions;
-  const i = acts.findIndex(a => a.type === 'op' && a.id === opId);
-  if (i < 0) return;
-  const removed = acts.slice(i);
-  state.redo = removed.map(a => [a]).reverse().concat(state.redo);
-  state.sim = E.replay(state.level.cfg, acts.slice(0, i));
-  state.batches = acts.slice(0, i).map(() => 1);
-  hideBanner();
-  setStatus(`Rewound ${removed.length} placement(s) — redo restores them in order.`);
-  autoAdvanceSelection();
-  saveHash(); renderAll();
+// Remove an op and its transitive dependents (deps are within a microbatch,
+// so this unwinds the rest of THAT strand only — other microbatches stay).
+function removeOpChain(opId) {
+  const sim = state.sim;
+  const doomed = new Set([opId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const op of sim.ops) {
+      if (doomed.has(op.id) || !sim.placed.has(op.id)) continue;
+      if (E.depsOf(sim.cfg, op).some(d => doomed.has(d))) { doomed.add(op.id); grew = true; }
+    }
+  }
+  const plan = new Map();
+  for (const [id, p] of sim.placed) if (!doomed.has(id)) plan.set(id, p.start);
+  try {
+    const actions = E.planToActions(state.level.cfg, plan);
+    state.sim = E.replay(state.level.cfg, actions);
+    state.batches = actions.map(() => 1);
+    state.redo = [];
+    const mb = sim.byId.get(opId).mb;
+    const n = [...doomed].filter(id => sim.placed.has(id)).length;
+    hideBanner();
+    setStatus(`Removed ${E.label(sim.byId.get(opId))} and ${n - 1} downstream op(s) of microbatch ${mb} — other microbatches untouched.`);
+    autoAdvanceSelection();
+    saveHash(); renderAll();
+  } catch (err) {
+    setStatus(`Can't remove just this strand: ${err.message} — use ✏️ edit instead.`, 'err');
+  }
 }
 
 function renderItem(item, sim, isGhost = false) {
@@ -946,15 +980,23 @@ function renderItem(item, sim, isGhost = false) {
   el.style.color = st.ink;
   el.innerHTML = `<span class="stg">${op.stage}</span>${op.kind}${op.mb}`;
   el.title = opTitle(op, sim) +
-    `\n(click: rewind to just before this · double-click: greedily finish microbatch ${op.mb})`;
+    `\n(click: remove this + the rest of microbatch ${op.mb} after it · ` +
+    `double-click: greedily finish microbatch ${op.mb} · drag: enter edit mode and slide it)`;
   if (!isGhost) {
     el.onmouseenter = () => traceDeps(op);
     el.onmouseleave = () => clearTrace();
+    // drag on a normal-mode op enters edit mode seamlessly (armed on
+    // pointerdown, triggered by movement past a threshold)
+    el.onpointerdown = ev => {
+      if (ev.button !== 0 || state.editing) return;
+      armDrag(op, ev);
+    };
     let clickTimer = null;
     el.onclick = ev => {
       ev.stopPropagation();
+      if (suppressNextClick) return;
       if (clickTimer) return;
-      clickTimer = setTimeout(() => { clickTimer = null; rewindTo(op.id); }, 260);
+      clickTimer = setTimeout(() => { clickTimer = null; removeOpChain(op.id); }, 260);
     };
     el.ondblclick = ev => {
       ev.stopPropagation();
@@ -1535,8 +1577,8 @@ function init() {
   });
   $('gridwrap').addEventListener('scroll', closePopover);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closePopover(); });
-  document.addEventListener('pointermove', onEditDragMove);
-  document.addEventListener('pointerup', onEditDragEnd);
+  document.addEventListener('pointermove', ev => { maybeStartArmedDrag(ev); onEditDragMove(ev); });
+  document.addEventListener('pointerup', () => { armedDrag = null; onEditDragEnd(); });
 
   const tsel = $('themesel');
   for (const [k, t] of Object.entries(THEMES)) {
