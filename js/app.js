@@ -1412,7 +1412,24 @@ function renderChrome() {
     lsel.appendChild(o);
   }
   lsel.value = cur;
-  vis('cfgrow', cur === 'custom');
+  // config row always visible once unlocked: editable in the sandbox,
+  // greyed-out (read-only) on lessons so the level's settings are legible
+  vis('cfgrow', featureOn('custom'));
+  if (featureOn('custom')) {
+    const c = state.level.cfg;
+    const custom = cur === 'custom';
+    $('cfgP').value = c.P;
+    $('cfgV').value = c.V;
+    $('cfgM').value = c.M;
+    $('cfgModel').value = c.model;
+    $('cfgCap').value = c.cap ?? '';
+    $('cfgWarmup').checked = c.warmup === 'zb2';
+    $('cfgPlace').value = c.place ?? '';
+    for (const id of ['cfgP', 'cfgV', 'cfgM', 'cfgModel', 'cfgCap', 'cfgWarmup', 'cfgPlace'])
+      $(id).disabled = !custom;
+    $('cfgapply').style.display = custom ? '' : 'none';
+    $('cfgfork').style.display = custom ? 'none' : '';
+  }
   vis('unlockall', !store.unlockAll);
 
   const sol = store.solution(state.level.key);
@@ -1495,7 +1512,11 @@ function showBanner(won, s) {
     ? ` You built <b>${rec.name}</b> — ${rec.note}.`
     : ` This op ordering doesn't match any schedule in our library — it's yours. 🧪`;
   let msg;
-  if (won) {
+  if (won && s.makespan < parM) {
+    msg = `🏆 <b>You BEAT par!</b> Makespan ${s.makespan} vs the reference's ${parM} — ` +
+      `you out-scheduled the standard policy by ${parM - s.makespan} slot(s).` + recMsg +
+      (rec?.name ? '' : ' Save that URL — schedules that beat the greedy reference are how new papers start.');
+  } else if (won) {
     msg = `🎉 <b>Level cleared!</b> Makespan ${s.makespan}` +
       (state.level.goal === 'internal0' ? `, internal bubble ${pct(s.internalBubble)}` :
        s.makespan <= parM ? ` — matched par` : '') + '.' + recMsg;
@@ -1697,6 +1718,11 @@ function init() {
     else loadLevel(levelByKey(e.target.value));
   };
   $('cfgapply').onclick = () => loadLevel(customLevel(readCustomCfg()));
+  $('cfgfork').onclick = () => {
+    for (const id of ['cfgP', 'cfgV', 'cfgM', 'cfgModel', 'cfgCap', 'cfgWarmup', 'cfgPlace'])
+      $(id).disabled = false;
+    loadLevel(customLevel({ ...state.level.cfg }));
+  };
   $('hintbtn').onclick = showHint;
   $('stampbtn').onclick = ev => stampCurrentBlock(ev);
   document.addEventListener('click', e => {
