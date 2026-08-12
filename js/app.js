@@ -1,5 +1,5 @@
 import * as E from './engine.js';
-import { LEVELS, levelByKey, levelIndex } from './levels.js';
+import { LEVELS, PAPERS, levelByKey, levelIndex } from './levels.js';
 import { THEMES, cellStyle } from './palettes.js';
 import { downloadSVG } from './export.js';
 
@@ -112,6 +112,10 @@ function loadLevel(level, actions = []) {
   state.showCompare = false;
   $('blurb').textContent = level.blurb;
   $('goal').textContent = goalText(level);
+  const refs = (level.papers ?? []).map(k => PAPERS[k]).filter(Boolean);
+  $('papers').innerHTML = refs.length
+    ? '📄 ' + refs.map(p => `<a href="${p.url}" target="_blank" rel="noopener">${p.label}</a>`).join(' · ')
+    : '';
   hideBanner();
   setStatus('');
   logClear();
@@ -1508,8 +1512,10 @@ function showBanner(won, s) {
   const parM = state.ref.score.makespan;
   // which schedule from the literature is this?
   const rec = E.recognizeSchedule(state.sim);
+  const cite = rec?.paper && PAPERS[rec.paper]
+    ? ` <a href="${PAPERS[rec.paper].url}" target="_blank" rel="noopener">[paper]</a>` : '';
   const recMsg = rec?.name
-    ? ` You built <b>${rec.name}</b> — ${rec.note}.`
+    ? ` You built <b>${rec.name}</b> — ${rec.note}.${cite}`
     : ` This op ordering doesn't match any schedule in our library — it's yours. 🧪`;
   let msg;
   if (won && s.makespan < parM) {
@@ -1786,6 +1792,35 @@ function init() {
     downloadSVG(state.sim, { theme: state.theme, mode: state.mode,
       title: `P=${cfg.P} V=${cfg.V} M=${cfg.M} (${cfg.model})` });
     setStatus('⤓ SVG downloaded — drop it straight into slides or a paper.');
+  };
+  $('bugbtn').onclick = ev => {
+    ev.preventDefault();
+    // the URL hash reproduces level/config/actions; bundle transient state
+    // (edit-mode plan, assist, mode flags) into the issue body as JSON
+    // the repro URL already encodes level/config/actions — the snapshot adds
+    // only what the hash can't carry (edit-mode plan, UI flags, environment)
+    const snap = {
+      level: state.level.key,
+      cfg: state.level.cfg,
+      editing: state.editing ? {
+        autoEdit: state.autoEdit,
+        plan: state.plan ? [...state.plan.entries()] : null,
+        lifted: state.lifted, strandMb: state.strandMb,
+      } : null,
+      assist: state.assist, theme: state.theme,
+      showCrit: state.showCrit, showCompare: state.showCompare,
+      progress: store.progress, unlockAll: store.unlockAll,
+      userAgent: navigator.userAgent,
+    };
+    const body =
+      `**What happened?**\n\n(describe the bug)\n\n**Repro link:** ${location.href}\n\n` +
+      `<details><summary>Internal state</summary>\n\n\`\`\`json\n` +
+      JSON.stringify(snap, null, 1).slice(0, 3000) +
+      `\n\`\`\`\n</details>\n`;
+    const u = new URL('https://github.com/ezyang/pipeline-parallelism-tutor/issues/new');
+    u.searchParams.set('title', `bug: ${state.level.name}`);
+    u.searchParams.set('body', body);
+    window.open(u, '_blank', 'noopener');
   };
   $('sharebtn').onclick = async () => {
     try {

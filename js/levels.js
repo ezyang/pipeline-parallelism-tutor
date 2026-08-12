@@ -1,3 +1,14 @@
+// Papers referenced by levels and by schedule recognition.
+export const PAPERS = {
+  gpipe: { label: 'GPipe (Huang et al. 2019)', url: 'https://arxiv.org/abs/1811.06965' },
+  pipedream: { label: 'PipeDream 1F1B (Narayanan et al. 2019)', url: 'https://arxiv.org/abs/1806.03377' },
+  pipedreamFlush: { label: 'PipeDream-Flush (Narayanan et al. 2021)', url: 'https://arxiv.org/abs/2006.09503' },
+  megatron: { label: 'Megatron interleaved 1F1B (Narayanan et al. 2021)', url: 'https://arxiv.org/abs/2104.04473' },
+  zb: { label: 'Zero Bubble Pipeline Parallelism (Qi et al. 2023)', url: 'https://arxiv.org/abs/2401.10241' },
+  controllable: { label: 'Controllable Memory / building blocks & ZB-V (Qi et al. 2024)', url: 'https://arxiv.org/abs/2405.15362' },
+  dualpipe: { label: 'DualPipe (DeepSeek-V3, 2024)', url: 'https://arxiv.org/abs/2412.19437' },
+};
+
 // Level progression. Each level fixes a config and a coaching policy; its
 // blurb states the lesson and `goal` the win condition:
 //   'complete'  — any legal complete schedule
@@ -24,6 +35,7 @@ place an ⏸ idle.`,
     cfg: { P: 2, V: 1, M: 4, model: '11', cap: null },
     policy: 'gpipe',
     goal: 'par',
+    papers: ['gpipe'],
     blurb: `Four microbatches, one color each. While rank 1 works on
 microbatch 0, rank 0 can already start microbatch 1 — that overlap is the
 whole point of pipelining. Run all forwards, then all backwards (GPipe).
@@ -36,6 +48,7 @@ a decent schedule achieves.`,
     cfg: { P: 4, V: 1, M: 4, model: '11', cap: 2 },
     policy: '1f1b',
     goal: 'complete',
+    papers: ['pipedream'],
     blurb: `Bigger pipe, and a new rule: each rank can hold at most 2
 microbatches of activations (the mem counter). Every forward holds memory
 until its backward releases it. Try forwards-first, GPipe-style — you'll hit
@@ -49,6 +62,7 @@ speed yet. (Watch the memory strips above each lane fill and drain.)`,
     cfg: { P: 4, V: 1, M: 8, model: '11', cap: 4 },
     policy: '1f1b',
     goal: 'par',
+    papers: ['pipedreamFlush', 'megatron'],
     blurb: `Level 3 forced you to interleave; this level asks for the RIGHT
 interleaving: warmup (rank r admits P−r forwards), then strictly alternate
 one forward, one backward. Par is makespan 22 — exactly the Megatron paper
@@ -65,6 +79,7 @@ feel the rhythm, then let ▸▸ grind and take over at the interesting bits.`,
     cfg: { P: 4, V: 1, M: 8, model: '11', cap: 4 },
     policy: '1f1b',
     goal: 'par',
+    papers: ['controllable'],
     blurb: `A schedule is really ONE microbatch's trajectory — a "building
 block" — repeated every 2 slots (Qi et al. 2024). So don't place 64 ops:
 design the block. Schedule ONLY microbatch 0 (all its Fs and Bs, idling as
@@ -81,6 +96,7 @@ tiles cleanly or drifts; shift-click stamps all remaining at once. A
     cfg: { P: 4, V: 2, M: 8, model: '11', cap: 8 },
     policy: '1f1b',
     goal: 'par',
+    papers: ['megatron', 'controllable', 'dualpipe'],
     blurb: `Each rank now hosts two chunks, placed in a "V": chunk 0 runs
 down ranks 0→3, chunk 1 runs back UP 3→0. So rank 0 has stages 0 and 7,
 and rank 3 has 3 and 4 — a microbatch bounces off the pipe ends, and at
@@ -100,6 +116,7 @@ gaps are, then try designing a block with those gaps built in.`,
     cfg: { P: 3, V: 2, M: 4, model: '11', cap: 6, place: 'wrap' },
     policy: '1f1b',
     goal: 'par',
+    papers: ['megatron'],
     blurb: `Four microbatches, three ranks: it doesn't divide. Interleaved
 schedules move microbatches in "rounds", and the naive grouping is 3 + 1 —
 that last undersized round is a straggler that drags a nearly-empty wave
@@ -120,6 +137,7 @@ it; if you find it, the banner will know. 🏆`,
     cfg: { P: 4, V: 1, M: 8, model: '12', cap: 4 },
     policy: '1f1b',
     goal: 'par',
+    papers: ['zb'],
     blurb: `Honest time model: backward takes two slots (it's roughly two
 matmuls to the forward's one). The steady-state rhythm is unchanged — 1F1B
 doesn't care about the ratio — but the block repeat interval is now w=3,
@@ -131,6 +149,7 @@ and bubbles cost more where backwards gate the critical path.`,
     cfg: { P: 4, V: 1, M: 8, model: 'zb', cap: 4 },
     policy: 'zb',
     goal: 'par',
+    papers: ['zb'],
     blurb: `Split the backward: B computes the input gradient (on the critical
 path — the next rank is waiting for it) and W computes the weight gradient
 (nobody is waiting — it can run whenever). Use W ops as filler to soak up
@@ -143,6 +162,7 @@ Same memory as 1F1B — W frees the activation, so delaying W costs memory.`,
     cfg: { P: 4, V: 1, M: 8, model: 'zb', cap: 8, warmup: 'zb2' },
     policy: 'zb',
     goal: 'internal0',
+    papers: ['zb'],
     blurb: `ZB-H2 spends memory to kill the bubble: admit up to 2(P−r)−1
 forwards in warmup (double the 1F1B quota), then use W ops as caulk so no
 rank ever gaps between its first and last op. Target: internal bubble 0% —

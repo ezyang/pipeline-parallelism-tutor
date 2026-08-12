@@ -1062,15 +1062,15 @@ export function recognizeSchedule(state) {
   const cfg = state.cfg;
   const candidates = [];
   const zb = cfg.model === 'zb';
-  const push = (name, note, policy, cfg2) => {
+  const push = (name, note, policy, cfg2, paper) => {
     try {
       const s = newState(cfg2 ?? cfg);
       if (!project(s, policy).done) return;
-      candidates.push({ name, note, state: s });
+      candidates.push({ name, note, state: s, paper });
     } catch { /* candidate not constructible for this cfg */ }
   };
   if (!zb) {
-    push('GPipe', 'all forwards, then all backwards (Huang et al. 2019)', 'gpipe');
+    push('GPipe', 'all forwards, then all backwards (Huang et al. 2019)', 'gpipe', null, 'gpipe');
     const vppName = placement(cfg) === 'v'
       ? 'V-shape interleaved 1F1B' : 'Interleaved 1F1B (Megatron VPP)';
     const vppNote = placement(cfg) === 'v'
@@ -1078,18 +1078,20 @@ export function recognizeSchedule(state) {
       : 'Narayanan et al. 2021 — interleaved stages';
     push(cfg.V > 1 ? vppName : '1F1B',
       cfg.V > 1 ? vppNote : 'one-forward-one-backward (PipeDream-Flush / Megatron)',
-      '1f1b');
-    push('1F1B (eager warmup)', '1F1B order but admitting forwards greedily in warmup', '1f1b-eager');
+      '1f1b', null, cfg.V > 1 ? (placement(cfg) === 'v' ? 'controllable' : 'megatron') : 'pipedreamFlush');
+    push('1F1B (eager warmup)', '1F1B order but admitting forwards greedily in warmup',
+      '1f1b-eager', null, 'pipedream');
   } else {
     const std = { ...cfg }; delete std.warmup;   // pin warmup per candidate
     push('ZB-H2', 'zero-bubble with doubled warmup, ~2P memory (Qi et al. 2023)', 'zb',
-      { ...cfg, warmup: 'zb2' });
-    push('ZB-H1', 'zero-bubble handcrafted schedule, 1F1B memory (Qi et al. 2023)', 'zb', std);
-    push('ZB-H1 (eager warmup)', 'zero-bubble greedy with eager warmup', 'zb-eager', std);
-    push('GPipe (F/B/W split)', 'all F, then all B, then W filler', 'gpipe', std);
+      { ...cfg, warmup: 'zb2' }, 'zb');
+    push('ZB-H1', 'zero-bubble handcrafted schedule, 1F1B memory (Qi et al. 2023)', 'zb', std, 'zb');
+    push('ZB-H1 (eager warmup)', 'zero-bubble greedy with eager warmup', 'zb-eager', std, 'zb');
+    push('GPipe (F/B/W split)', 'all F, then all B, then W filler', 'gpipe', std, 'gpipe');
   }
   for (const c of candidates) if (sameOrder(state, c.state)) {
-    return { name: c.name, note: c.note, exact: score(state).makespan === score(c.state).makespan };
+    return { name: c.name, note: c.note, paper: c.paper,
+      exact: score(state).makespan === score(c.state).makespan };
   }
   return { name: null };
 }
