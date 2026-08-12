@@ -111,12 +111,55 @@ main > div { min-width: 0; }
   background-image: repeating-linear-gradient(45deg, transparent 0 5px, var(--grid) 5px 7px);
 }
 .op.dim { opacity: 0.22; }
+.op .stg, .opbtn .stg {
+  font-size: 8px; font-weight: 700; opacity: 0.75;
+  align-self: flex-start; margin: 1px 1px 0 0; line-height: 1;
+}
+.stg-demo { font-size: 9px; vertical-align: super; }
+.rankrow .op { cursor: pointer; }
+
+/* memory-over-time strip under each lane */
+.memrow { display: flex; height: 14px; margin-bottom: 3px; }
+.memrow::before { content: ""; width: 130px; flex: none; }
+.memlane { position: relative; flex: none; border-bottom: 1px solid var(--grid); }
+.membar {
+  position: absolute; bottom: 0; width: 32px;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.membar.atcap { background: color-mix(in srgb, var(--bad) 70%, transparent); }
 .op.dep-up { outline: 2.5px solid var(--bad); outline-offset: 1px; z-index: 5; }
 .op.dep-down { outline: 2.5px solid var(--good); outline-offset: 1px; z-index: 5; }
 .op.ghost { opacity: 0.5; border-style: dashed; box-shadow: none; z-index: 6; }
 .frontier {
   position: absolute; top: 1px; bottom: 1px; width: 0;
   border-left: 2px solid var(--accent); z-index: 4;
+}
+.slot {
+  position: absolute; top: 4px; height: calc(var(--cell-h) - 9px);
+  width: calc(var(--cell) - 4px);
+  border: 1.5px dashed var(--accent); border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent); font-weight: 700; cursor: pointer;
+  opacity: 0.55; z-index: 5; user-select: none;
+}
+.slot:hover, .slot.active { opacity: 1; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+#gridwrap { position: relative; }
+.popover {
+  position: absolute; z-index: 30; min-width: 230px; max-width: 460px;
+  background: var(--surface); border: 1px solid var(--axis); border-radius: 10px;
+  padding: 8px 12px; box-shadow: 0 6px 24px rgba(0,0,0,0.22);
+}
+.popover .kindgroup { display: flex; align-items: center; flex-wrap: wrap; }
+.popover .kindlabel { min-width: 70px; }
+.opbtn.pulse { animation: pulse 0.9s 2; }
+@keyframes pulse {
+  0%, 100% { transform: scale(1); box-shadow: none; }
+  50% { transform: scale(1.15); box-shadow: 0 0 0 3px var(--accent); }
+}
+.cfgrow {
+  display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center;
+  padding: 8px 16px; background: var(--surface);
+  border-bottom: 1px solid var(--ring);
 }
 .rankrow.selected .frontier::after {
   content: "▶"; position: absolute; left: 1px; top: 50%;
@@ -152,15 +195,26 @@ table.stats td:first-child, table.stats th:first-child { text-align: left; }
 #log .entry { padding: 3px 0; border-bottom: 1px solid var(--grid); color: var(--ink-2); }
 #log .entry.err { color: var(--bad); }
 #log .entry.event { color: var(--ink); }
-#toast {
-  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-  background: var(--warn-bg); color: var(--ink);
-  border: 1px solid var(--axis); border-radius: 8px;
-  padding: 10px 16px; max-width: 620px; z-index: 50;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
-  opacity: 0; pointer-events: none; transition: opacity 0.18s;
+.status { font-size: 13px; margin-top: 8px; min-height: 1.4em; color: var(--ink-2); }
+.status.err { color: var(--bad); font-weight: 600; }
+.status.shake { animation: shake 0.3s; }
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
 }
-#toast.show { opacity: 1; }
+
+.banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 14px; padding: 12px 16px; border-radius: 10px;
+  border: 1.5px solid var(--axis); background: var(--surface);
+}
+.banner.won { border-color: var(--good); }
+.banner.missed { border-color: #c98500; }
+.banner span { flex: 1; min-width: 200px; }
+
+.goal { margin: 8px 0 0; font-weight: 600; color: var(--ink); }
+.goal::before { content: "🎯 "; }
 kbd {
   border: 1px solid var(--axis); border-bottom-width: 2px; border-radius: 4px;
   padding: 0 4px; font-size: 11px; background: var(--surface);
