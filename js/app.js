@@ -273,16 +273,21 @@ function computeFollowGhosts(sim) {
     const site = earliestSite(sim, op);   // legality-checked, shoves right if needed
     if (site) out.push({ id: op.id, rank: op.rank, mb: op.mb, ...site });
   }
-  // duel resolution: when several ghosts want the same (rank, t) cell, show
-  // only the lowest microbatch (what greedy would run); right-click the cell
-  // still offers everything via the full selector.
+  // duel resolution: when ghosts from DIFFERENT microbatches want the same
+  // (rank, t) cell, don't pick a winner — that's a genuine scheduling choice.
+  // Emit a single grey "conflict ghost" there; clicking it opens the selector.
   const byCell = new Map();
   for (const g of out) {
     const k = g.rank + ':' + g.t;
-    const cur = byCell.get(k);
-    if (!cur || g.mb < cur.mb) byCell.set(k, g);
+    if (!byCell.has(k)) byCell.set(k, []);
+    byCell.get(k).push(g);
   }
-  return [...byCell.values()];
+  const result = [];
+  for (const gs of byCell.values()) {
+    if (gs.length === 1) result.push(gs[0]);
+    else result.push({ ...gs[0], conflict: gs.map(g => g.id) });
+  }
+  return result;
 }
 
 // Accept one ghost proposal (shared by click and the chase loop).
@@ -301,6 +306,7 @@ function acceptGhost(g) {
     const op = sim.byId.get(g.id);
     const skipW = E.splitGrad(sim.cfg.model);
     const auto = computeFollowGhosts(sim)
+      .filter(x => !x.conflict)   // chase stops at conflicts; so does the streak
       .filter(x => sim.byId.get(x.id).mb === op.mb)
       .filter(x => !(skipW && sim.byId.get(x.id).kind === 'W'))
       .sort((a, b) => a.t - b.t)[0];
@@ -332,6 +338,7 @@ function chaseMicrobatch(mb) {
   chasing = true;
   for (let guard = 0; guard < 512; guard++) {
     const ghosts = computeFollowGhosts(state.sim)
+      .filter(g => !g.conflict || g.conflict.every(id => state.sim.byId.get(id).mb === mb))
       .filter(g => state.sim.byId.get(g.id).mb === mb)
       .filter(g => !(skipW && state.sim.byId.get(g.id).kind === 'W'))
       .sort((a, b) => a.t - b.t);
@@ -629,26 +636,41 @@ function renderGrid() {
     // the rest of that microbatch. Right-click: pick something else instead.
     for (const g of followGhosts.filter(g => g.rank === r)) {
       const op = sim.byId.get(g.id);
-      const el = renderItem({ id: g.id, start: g.t, dur: op.dur }, sim, true);
-      el.classList.add('ghost', 'follow');
-      el.title = `${E.label(op)} is ready — click to place it here (t=${g.t})` +
-        (g.mode === 'idle' ? ', filling the idle gap' : '') +
-        `.\nDouble-click: place it and finish microbatch ${op.mb} greedily.` +
-        `\nRight-click (or long-press): pick something else for this slot.`;
-      el.style.cursor = 'pointer';
-      // first click places instantly; the re-rendered REAL op receives the
-      // second click of a double-click, whose handler runs the chase
-      el.onclick = ev => {
-        ev.stopPropagation();
-        if (suppressNextClick) return;
-        acceptGhost(g);
-      };
       const altPick = ev => {
         ev.preventDefault(); ev.stopPropagation();
         if (performance.now() - lastLongPressAt < 50 && ev.type === 'contextmenu') return;
         if (g.mode === 'idle') openIdlePopover(r, g.t, ev);
         else openPopover(r, g.t, ev);
       };
+      let el;
+      if (g.conflict) {
+        // several microbatches are ready for this cell: a real choice — show
+        // a grey conflict ghost that forces a pick instead of favoring one
+        el = document.createElement('div');
+        el.className = 'op ghost follow conflict';
+        el.style.left = (g.t * CELL + 1) + 'px';
+        el.style.width = (op.dur * CELL - 4) + 'px';
+        const names = g.conflict.map(id => E.label(sim.byId.get(id)));
+        el.textContent = '?';
+        el.title = `${names.join(' and ')} are both ready here (t=${g.t}) — ` +
+          `that's a genuine scheduling choice. Click to pick.`;
+        el.onclick = ev => { ev.stopPropagation(); altPick(ev); };
+      } else {
+        el = renderItem({ id: g.id, start: g.t, dur: op.dur }, sim, true);
+        el.classList.add('ghost', 'follow');
+        el.title = `${E.label(op)} is ready — click to place it here (t=${g.t})` +
+          (g.mode === 'idle' ? ', filling the idle gap' : '') +
+          `.\nDouble-click: place it and finish microbatch ${op.mb} greedily.` +
+          `\nRight-click (or long-press): pick something else for this slot.`;
+        // first click places instantly; the re-rendered REAL op receives the
+        // second click of a double-click, whose handler runs the chase
+        el.onclick = ev => {
+          ev.stopPropagation();
+          if (suppressNextClick) return;
+          acceptGhost(g);
+        };
+      }
+      el.style.cursor = 'pointer';
       el.oncontextmenu = altPick;
       onLongPress(el, altPick);   // touch: long-press = right-click
       lane.appendChild(el);

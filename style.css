@@ -141,6 +141,13 @@ main > div { min-width: 0; }
   -webkit-touch-callout: none; -webkit-user-select: none; touch-action: manipulation; }
 .op.ghost.follow { opacity: 0.4; }
 .op.ghost.follow:hover { opacity: 0.95; box-shadow: 0 0 0 2px var(--accent); }
+.op.ghost.conflict {
+  background: transparent; border: 1.5px dashed var(--muted); color: var(--muted);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; opacity: 0.6;
+  position: absolute; top: 4px; height: calc(var(--cell-h) - 9px); border-radius: 4px;
+}
+.op.ghost.conflict:hover { opacity: 1; border-color: var(--ink-2); color: var(--ink-2); box-shadow: none; }
 .frontier {
   position: absolute; top: 1px; bottom: 1px; width: 0;
   border-left: 2px solid var(--accent); z-index: 4;
