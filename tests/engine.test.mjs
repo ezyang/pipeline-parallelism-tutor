@@ -421,3 +421,25 @@ test('zb greedy reaches the makespan floor (depth-maintenance fix)', () => {
   assert.strictEqual(h2.score.makespan, 27);
   assert.ok(h2.score.internalBubble < 1e-9);
 });
+
+test('CONTRACT: every level\'s par is a recognized canonical schedule', async () => {
+  const { LEVELS } = await import('../js/levels.js');
+  const expected = {
+    'first-steps': 'GPipe',
+    'gpipe-intro': 'GPipe',
+    'memory-wall': '1F1B',
+    '1f1b': '1F1B',
+    'building-block': '1F1B',
+    'interleaved': 'V-shape interleaved 1F1B',
+    'ragged': 'Interleaved 1F1B (Megatron VPP)',
+    'b-twice-f': '1F1B',
+    'zero-bubble': 'ZB-H1',
+    'zb-h2': 'ZB-H2',
+  };
+  for (const l of LEVELS) {
+    const r = E.referenceSchedule(l.cfg);
+    const rec = E.recognizeSchedule(r.state);
+    assert.strictEqual(rec?.name, expected[l.key],
+      `level ${l.key}: par must be the lesson's canonical schedule`);
+  }
+});

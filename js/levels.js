@@ -127,9 +127,10 @@ leftover microbatch rides inside a full wave instead of forming its own
 pipe, wider than the pipe itself; the warmup quota grows with round size
 ((P−r−1)·2 + (V−1)·G + 1). Wrap placement here because rounds are a
 wrap-schedule concept — and at this size wrap-with-balanced-rounds (22)
-beats the V placement (24). One more secret: par itself is NOT optimal
-here — a hand-crafted schedule reaches 21. No simple greedy rule generates
-it; if you find it, the banner will know. 🏆`,
+beats the V placement (24). Par is the balanced-round Megatron schedule —
+the lesson's schedule, not the optimum. Ragged tails leave slack no uniform
+rule exploits: a hand-crafted 21 exists. Beating par here means you've
+out-scheduled Megatron. 🏆`,
   },
   {
     key: 'b-twice-f',

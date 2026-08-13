@@ -130,11 +130,13 @@ function loadLevel(level, actions = []) {
 
 function goalText(level) {
   const ref = E.referenceSchedule(level.cfg);
+  const canon = E.recognizeSchedule(ref.state);
+  const parName = canon?.name ? ` — that's ${canon.name}, this lesson's schedule` : '';
   switch (level.goal) {
     case 'complete': return `Goal: any complete, legal schedule.`;
-    case 'par': return `Goal: complete it in makespan ≤ ${ref.score.makespan} (par).`;
+    case 'par': return `Goal: complete it in makespan ≤ ${ref.score.makespan} (par${parName}).`;
     case 'internal0': return `Goal: complete it with 0% internal bubble ` +
-      `(no rank idles between its first and last op). Par makespan is ${ref.score.makespan}.`;
+      `(no rank idles between its first and last op). Par makespan is ${ref.score.makespan}${parName}.`;
   }
 }
 
@@ -1519,9 +1521,11 @@ function showBanner(won, s) {
     : ` This op ordering doesn't match any schedule in our library — it's yours. 🧪`;
   let msg;
   if (won && s.makespan < parM) {
-    msg = `🏆 <b>You BEAT par!</b> Makespan ${s.makespan} vs the reference's ${parM} — ` +
-      `you out-scheduled the standard policy by ${parM - s.makespan} slot(s).` + recMsg +
-      (rec?.name ? '' : ' Save that URL — schedules that beat the greedy reference are how new papers start.');
+    const canon = E.recognizeSchedule(state.ref.state);
+    const parName = canon?.name ?? 'the reference schedule';
+    msg = `🏆 <b>You BEAT par!</b> Makespan ${s.makespan} vs ${parM} — you out-scheduled ` +
+      `<b>${parName}</b>, the schedule this lesson teaches, by ${parM - s.makespan} slot(s).` + recMsg +
+      (rec?.name ? '' : ' Save that URL — improvements on the canonical schedules are how new papers start.');
   } else if (won) {
     msg = `🎉 <b>Level cleared!</b> Makespan ${s.makespan}` +
       (state.level.goal === 'internal0' ? `, internal bubble ${pct(s.internalBubble)}` :
