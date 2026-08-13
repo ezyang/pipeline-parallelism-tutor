@@ -25,9 +25,11 @@ export const LEVELS = [
     goal: 'complete',
     blurb: `One microbatch, two ranks. Send its forward up the pipe (F on
 rank 0, then rank 1), then its backward down (B on rank 1, then rank 0).
-Bright ops are ready to run; dim ones aren't — hover one to see what it's
-waiting for. When nothing is ready on a rank, the only move is to wait:
-place an ⏸ idle.`,
+Click an empty cell in the grid and pick what runs there. Bright ops are
+ready to run; dim ones aren't — hover one to see what it's waiting for.
+When nothing is ready on a rank, the only move is to wait: leave the slot
+empty and place further right. Do it all by hand this once — from level 2
+on, the grid starts suggesting ready moves for you.`,
   },
   {
     key: 'gpipe-intro',

@@ -11,6 +11,8 @@ const CELL = 34;
 // UI features unlock at level indices (kept once unlocked).
 
 const FEATURE_AT = {
+  ghosts: 1,       // level 1 is hand-placement only — ghost proposals would
+                   // solve the whole first puzzle for you
   scoreboard: 1,   // pipelining level introduces bubble/par
   theme: 1,
   assist: 3,       // 1F1B introduces the coach + the full power-tool set:
@@ -258,7 +260,7 @@ function earliestSite(sim, op) {
 // microbatch is placed (start the next microbatch). Stage-0 F0_0 aside, this
 // keeps the board from drowning in ghosts at level start.
 function computeFollowGhosts(sim) {
-  if (E.isDone(sim)) return [];
+  if (E.isDone(sim) || !featureOn('ghosts')) return [];
   const out = [];
   for (const op of sim.ops) {
     if (sim.placed.has(op.id)) continue;
@@ -350,6 +352,38 @@ function chaseMicrobatch(mb) {
       (leftW ? ` W ops left to you — they're filler; spend them where bubbles would be.` :
        left ? '' : ' — strand complete.'));
   }
+}
+
+// Long-press (touch/pen) as the mobile equivalent of right-click. Fires `fn`
+// after 450ms of stationary contact; suppresses the click that follows.
+// Android also fires contextmenu on long-press — lastLongPressAt lets the
+// contextmenu handler skip its double.
+let lastLongPressAt = 0;
+function onLongPress(el, fn, ms = 450) {
+  let timer = null, fired = false, sx = 0, sy = 0;
+  el.addEventListener('pointerdown', ev => {
+    if (ev.pointerType === 'mouse') return;   // mouse has a real right-click
+    fired = false; sx = ev.clientX; sy = ev.clientY;
+    timer = setTimeout(() => {
+      timer = null; fired = true;
+      lastLongPressAt = performance.now();
+      fn(ev);
+    }, ms);
+  });
+  el.addEventListener('pointermove', ev => {
+    if (timer && (Math.abs(ev.clientX - sx) > 8 || Math.abs(ev.clientY - sy) > 8)) {
+      clearTimeout(timer); timer = null;      // it's a scroll/drag, not a press
+    }
+  });
+  const done = () => {
+    clearTimeout(timer); timer = null;
+    if (fired) {
+      suppressNextClick = true;               // eat the synthetic click/tap
+      setTimeout(() => { suppressNextClick = false; }, 0);
+    }
+  };
+  el.addEventListener('pointerup', done);
+  el.addEventListener('pointercancel', done);
 }
 
 function afterChange(action, silent) {
@@ -600,16 +634,23 @@ function renderGrid() {
       el.title = `${E.label(op)} is ready — click to place it here (t=${g.t})` +
         (g.mode === 'idle' ? ', filling the idle gap' : '') +
         `.\nDouble-click: place it and finish microbatch ${op.mb} greedily.` +
-        `\nRight-click: pick something else for this slot.`;
+        `\nRight-click (or long-press): pick something else for this slot.`;
       el.style.cursor = 'pointer';
       // first click places instantly; the re-rendered REAL op receives the
       // second click of a double-click, whose handler runs the chase
-      el.onclick = ev => { ev.stopPropagation(); acceptGhost(g); };
-      el.oncontextmenu = ev => {
+      el.onclick = ev => {
+        ev.stopPropagation();
+        if (suppressNextClick) return;
+        acceptGhost(g);
+      };
+      const altPick = ev => {
         ev.preventDefault(); ev.stopPropagation();
+        if (performance.now() - lastLongPressAt < 50 && ev.type === 'contextmenu') return;
         if (g.mode === 'idle') openIdlePopover(r, g.t, ev);
         else openPopover(r, g.t, ev);
       };
+      el.oncontextmenu = altPick;
+      onLongPress(el, altPick);   // touch: long-press = right-click
       lane.appendChild(el);
     }
     // clickable slots from the frontier onward; clicking a later one
