@@ -11,7 +11,7 @@
 export function durations(model) {
   if (model === '12') return { F: 1, B: 2 };
   if (model === 'zb') return { F: 1, B: 1, W: 1 };
-  if (model === 'zb12') return { F: 1, B: 2, W: 1 }; // honest ratios: B≈2F
+  if (model === 'zb12') return { F: 1, B: 2, W: 1 }; // uneven split (dX heavier); NB the papers' honest split is F=B=W=1
   return { F: 1, B: 1 };
 }
 

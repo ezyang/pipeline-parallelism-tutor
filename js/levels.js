@@ -138,10 +138,12 @@ it; if you find it, the banner will know. 🏆`,
     policy: '1f1b',
     goal: 'par',
     papers: ['zb'],
-    blurb: `Honest time model: backward takes two slots (it's roughly two
-matmuls to the forward's one). The steady-state rhythm is unchanged — 1F1B
-doesn't care about the ratio — but the block repeat interval is now w=3,
-and bubbles cost more where backwards gate the critical path.`,
+    blurb: `Honest time model: backward takes two slots, because it really is
+two matmuls — the input gradient (dX = dY·Wᵀ) and the weight gradient
+(dW = Xᵀ·dY) — fused into one block. The steady-state rhythm is unchanged —
+1F1B doesn't care about the ratio — but the block interval is now w=3, and
+bubbles cost more where those fat backwards gate the critical path. Par is
+33. Remember that number: the next level cuts this same backward in half.`,
   },
   {
     key: 'zero-bubble',
@@ -150,17 +152,15 @@ and bubbles cost more where backwards gate the critical path.`,
     policy: 'zb',
     goal: 'par',
     papers: ['zb'],
-    blurb: `Split the backward: B computes the input gradient (on the critical
-path — the next rank is waiting for it) and W computes the weight gradient
-(nobody is waiting — it can run whenever). Use W ops as filler to soak up
-what would otherwise be bubbles, ZB-H1 style. Priority: B, then F, then W.
-Same memory as 1F1B — W frees the activation, so delaying W costs memory.
-Challenge: par (29, the greedy B>F>W policy) is beatable — with a staggered
-warmup you can hit the floor of 27 (rank 3 starts at t=3 + 24 slots of
-work) at the SAME memory cap. Fair warning: that's partly a unit-time
-artifact. With the papers' honest B=2F ratio ("split F/B/W, B=2F" in the
-sandbox) the same-memory floor is out of reach — and that stubborn residual
-bubble is exactly why ZB-H2 (next level) pays double memory to kill it.`,
+    blurb: `Level 8's two-slot backward was two matmuls fused. Now UNFUSE it:
+B computes the input gradient (one slot, on the critical path — the next
+rank is waiting for it) and W the weight gradient (one slot, and NOBODY is
+waiting — pure filler). Exactly the same total work as level 8, same floor
+(27), same cap — but par drops from 33 to 29, because the halves schedule
+independently. That one change is the zero-bubble idea (Qi et al. 2023).
+Note W is what frees the activation, so parking W late costs memory.
+Challenge: greedy par (29) is still beatable — stagger the warmup instead
+of running it eagerly and you can reach the floor, 27, at the same cap.`,
   },
   {
     key: 'zb-h2',
