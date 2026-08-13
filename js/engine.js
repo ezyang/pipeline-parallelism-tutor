@@ -264,13 +264,23 @@ export function warmupQuota(cfg, rank) {
 
 export function rankCandidates(state, rank, policyKey, relaxQuota = false) {
   const pol = POLICIES[policyKey];
-  const order = pol.order;
+  let order = pol.order;
   let cands = readySet(state, rank);
   if (pol.quota && !relaxQuota) {
     // Quota is on forward-minus-backward depth, not raw activations: in the
     // split model W frees memory but shouldn't gate admitting forwards.
     const q = warmupQuota(state.cfg, rank);
     cands = cands.filter(o => o.kind !== 'F' || state.fbDepth[rank] < q);
+    // Depth maintenance (split-grad models): while the rank is BELOW its
+    // target depth, a ready F outranks B — otherwise strict B-first lets the
+    // forward stream sag in steady state, the tail microbatch's F crosses
+    // late, and its backward chain returns after the drain has gone dry
+    // (costing bubble at the very end). Keeping depth topped up is what the
+    // ZB paper's schedules do; with it, greedy reaches the makespan floor.
+    if (splitGrad(state.cfg.model) && state.fbDepth[rank] < q &&
+        cands.some(o => o.kind === 'F')) {
+      order = { F: 0, B: 1, W: 2 };
+    }
   }
   // priority: kind class, then position in the microbatch stream. With V=1
   // that's just microbatch order. With V>1 under 'wrap' placement, follow

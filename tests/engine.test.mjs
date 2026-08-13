@@ -410,3 +410,14 @@ test('zb12 model: B=2F with split grads; schedules complete', () => {
   const r2 = E.referenceSchedule({ ...cfg, cap: 8, warmup: 'zb2' });
   assert.ok(r2.done);
 });
+
+test('zb greedy reaches the makespan floor (depth-maintenance fix)', () => {
+  const cfg = { P: 4, V: 1, M: 8, model: 'zb', cap: 4 };
+  const r = E.referenceSchedule(cfg);
+  assert.strictEqual(r.score.makespan, 27);   // floor: (P-1) + M*3
+  assert.deepStrictEqual(r.score.peak, [4, 4, 4, 4]);  // still 1F1B memory
+  // H2 still hits 0% internal at par 27
+  const h2 = E.referenceSchedule({ ...cfg, cap: 8, warmup: 'zb2' });
+  assert.strictEqual(h2.score.makespan, 27);
+  assert.ok(h2.score.internalBubble < 1e-9);
+});

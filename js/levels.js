@@ -155,12 +155,14 @@ bubbles cost more where those fat backwards gate the critical path. Par is
     blurb: `Level 8's two-slot backward was two matmuls fused. Now UNFUSE it:
 B computes the input gradient (one slot, on the critical path — the next
 rank is waiting for it) and W the weight gradient (one slot, and NOBODY is
-waiting — pure filler). Exactly the same total work as level 8, same floor
-(27), same cap — but par drops from 33 to 29, because the halves schedule
-independently. That one change is the zero-bubble idea (Qi et al. 2023).
-Note W is what frees the activation, so parking W late costs memory.
-Challenge: greedy par (29) is still beatable — stagger the warmup instead
-of running it eagerly and you can reach the floor, 27, at the same cap.`,
+waiting — pure filler). Exactly the same total work as level 8, same cap —
+but par drops from 33 to 27, which is the theoretical FLOOR (rank 3 can't
+start before t=3 and has 24 slots of work): the bubble is gone, at 1F1B
+memory, purely because the halves schedule independently. That one change
+is the zero-bubble idea (Qi et al. 2023). Two things to watch: W is what
+frees the activation (parking W late costs memory), and the policy keeps
+each rank's F−B depth topped up — let the forward stream sag and the last
+microbatch's backward comes home late.`,
   },
   {
     key: 'zb-h2',
