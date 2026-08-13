@@ -155,9 +155,12 @@ path — the next rank is waiting for it) and W computes the weight gradient
 (nobody is waiting — it can run whenever). Use W ops as filler to soak up
 what would otherwise be bubbles, ZB-H1 style. Priority: B, then F, then W.
 Same memory as 1F1B — W frees the activation, so delaying W costs memory.
-(Everything here is unit-time for clarity; the papers' figures use B≈2F.
-Try "split F/B/W, B=2F" in the sandbox for the honest version — the W-tetris
-gets much more interesting when the pieces have different sizes.)`,
+And a challenge: par (29, the greedy B>F>W policy) is NOT optimal. The
+theoretical floor is 27 — rank 3 starts at t=3 and has 24 slots of work —
+and it's reachable at the same peak memory. Hint: greedy's mistake is
+running warmup EAGERLY; the paper's handcrafted schedule doesn't. First
+found by Alban D. 🏆 (Unit-time here for clarity; try "split F/B/W, B=2F"
+in the sandbox for the papers' honest ratios.)`,
   },
   {
     key: 'zb-h2',
