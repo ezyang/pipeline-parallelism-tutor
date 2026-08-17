@@ -52,6 +52,8 @@
     </select>
   </label>
   <label class="ctl">mem cap <input type="number" id="cfgCap" value="4" min="1" placeholder="∞"></label>
+  <label class="ctl" title="ZeRO-3: stage weights cost this much memory and must be allgathered before use (0 = off)">FSDP wt <input type="number" id="cfgFsdp" value="0" min="0" max="16"></label>
+  <label class="ctl" title="Scheduling-unit size for the BF-PP reference (microbatches per group)">group <input type="number" id="cfgGroup" value="" min="1" max="16" placeholder="auto"></label>
   <label class="ctl"><input type="checkbox" id="cfgWarmup"> deep warmup (ZB-H2)</label>
   <button id="cfgapply" class="primary">apply</button>
   <button id="cfgfork" style="display:none" title="Open this level's configuration in the sandbox, where every setting is editable">⚙ tweak in sandbox</button>

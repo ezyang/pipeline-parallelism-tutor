@@ -435,6 +435,7 @@ test('CONTRACT: every level\'s par is a recognized canonical schedule', async ()
     'b-twice-f': '1F1B',
     'zero-bubble': 'ZB-H1',
     'zb-h2': 'ZB-H2',
+    'fsdp': 'Breadth-First PP',
   };
   for (const l of LEVELS) {
     const r = E.referenceSchedule(l.cfg);
@@ -442,4 +443,48 @@ test('CONTRACT: every level\'s par is a recognized canonical schedule', async ()
     assert.strictEqual(rec?.name, expected[l.key],
       `level ${l.key}: par must be the lesson's canonical schedule`);
   }
+});
+
+test('FSDP residency: gathers counted, reuse is free, pressure reshards, OOM blocks', () => {
+  const cfg = { P: 2, V: 2, M: 4, model: '11', cap: 10, place: 'wrap', fsdp: 6 };
+  // rank 0 hosts stages 0 and 2; weights 6 units each, cap 10 => never both resident
+  const s = E.newState(cfg);
+  E.apply(s, { rank: 0, type: 'op', id: 'F0_0' });   // gather stage 0 (AG 1)
+  E.apply(s, { rank: 0, type: 'op', id: 'F0_1' });   // reuse — no AG
+  assert.strictEqual(s.agCount[0], 1);
+  // now run stage 2 work: F2_0 needs F1_0 on rank 1 first
+  E.apply(s, { rank: 1, type: 'idle' });
+  E.apply(s, { rank: 1, type: 'op', id: 'F1_0' });   // gather stage 1 (rank1 AG 1)
+  E.apply(s, { rank: 1, type: 'op', id: 'F1_1' });
+  E.apply(s, { rank: 0, type: 'op', id: 'F2_0' });   // gather stage 2, MUST reshard stage 0
+  assert.strictEqual(s.agCount[0], 2);
+  assert.deepStrictEqual([...s.resident[0]], [2]);   // stage 0 was evicted
+  // going back to stage 0 costs another AG (the ping-pong lesson)
+  E.apply(s, { rank: 0, type: 'op', id: 'F0_2' });
+  assert.strictEqual(s.agCount[0], 3);
+  // OOM: with acts high enough, even one stage's weights can't fit
+  const tight = { P: 2, V: 2, M: 8, model: '11', cap: 8, place: 'wrap', fsdp: 6 };
+  const s2 = E.newState(tight);
+  E.apply(s2, { rank: 0, type: 'op', id: 'F0_0' });  // 1 act + 6 wt = 7 ok
+  E.apply(s2, { rank: 0, type: 'op', id: 'F0_1' });  // 2 + 6 = 8 ok
+  assert.throws(() => E.apply(s2, { rank: 0, type: 'op', id: 'F0_2' }), /OOM/);
+});
+
+test('FSDP level scenario: grouped par works, full breadth deadlocks, ping-pong AG-storms', () => {
+  const base = { P: 2, V: 2, M: 8, model: '11', cap: 14, place: 'wrap', fsdp: 6 };
+  // par: BF-PP with groups of 4
+  const par = E.referenceSchedule({ ...base, group: 4 });
+  assert.ok(par.done);
+  assert.strictEqual(par.score.agTotal, 10);
+  assert.strictEqual(E.recognizeSchedule(par.state).name, 'Breadth-First PP');
+  // full breadth (group 8): cannot complete under the cap
+  const g8 = E.newState({ ...base, group: 8 });
+  const r8 = E.project(g8, 'bfpp');
+  assert.ok(!r8.done, 'full breadth should OOM/deadlock');
+  // per-microbatch ping-pong (1f1b policy): completes but with many more AGs
+  const pp = E.newState(base);
+  const rp = E.project(pp, '1f1b');
+  assert.ok(rp.done);
+  assert.ok(E.score(pp).agTotal >= 2 * par.score.agTotal,
+    `ping-pong AGs (${E.score(pp).agTotal}) should dwarf grouped (${par.score.agTotal})`);
 });

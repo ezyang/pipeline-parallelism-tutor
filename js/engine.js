@@ -109,8 +109,40 @@ export function newState(cfg) {
     peak: new Array(cfg.P).fill(0),
     firstB: new Array(cfg.P).fill(null),  // time of first backward per rank
     lastF: new Array(cfg.P).fill(null),
+    // FSDP/ZeRO-3 residency (only used when cfg.fsdp = weight units per stage):
+    // gathered stage weights per rank, allgather count, and gather event log
+    resident: Array.from({ length: cfg.P }, () => new Set()),
+    agCount: new Array(cfg.P).fill(0),
+    agEvents: [],                         // {rank, stage, t}
     actions: [],
   };
+}
+
+// FSDP memory used by resident weights on a rank (0 when fsdp is off).
+export function residentWeight(state, rank) {
+  return (state.cfg.fsdp ?? 0) * state.resident[rank].size;
+}
+
+// What running `op` at time t would do to rank memory under FSDP residency:
+// gather its stage if absent (evicting others if the cap demands it — evicting
+// is free, it's a reshard), then check activations + weights against the cap.
+// Returns { ok, gather, evict, need } without mutating state.
+export function fsdpAdmit(state, op, actDelta) {
+  const w = state.cfg.fsdp ?? 0;
+  const cap = state.cfg.cap;
+  const r = op.rank;
+  const acts = state.inflight[r] + actDelta;
+  if (!w) return { ok: cap == null || acts <= cap, gather: false, evict: false, need: acts };
+  const has = state.resident[r].has(op.stage);
+  const gather = !has;
+  let stages = state.resident[r].size + (has ? 0 : 1);
+  let evict = false;
+  if (cap != null && acts + w * stages > cap && stages > 1) {
+    stages = 1;                    // reshard everything except op's stage
+    evict = true;
+  }
+  const need = acts + w * stages;
+  return { ok: cap == null || need <= cap, gather, evict, need };
 }
 
 export function pendingOps(state, rank) {
@@ -132,7 +164,16 @@ export function blockReason(state, op, t) {
     if (p.end > t) return { code: 'dep-late', dep: depId, readyAt: p.end,
       msg: `needs ${label(dep)}, which finishes at t=${p.end}` };
   }
-  if (op.kind === 'F' && state.cfg.cap != null &&
+  if (state.cfg.fsdp) {
+    const adm = fsdpAdmit(state, op, op.kind === 'F' ? 1 : 0);
+    if (!adm.ok) {
+      return { code: 'memory', msg:
+        `OOM: ${label(op)} needs ${adm.need} memory on rank ${op.rank} ` +
+        `(${state.inflight[op.rank] + (op.kind === 'F' ? 1 : 0)} activations + ` +
+        `${state.cfg.fsdp}×${adm.evict ? 1 : state.resident[op.rank].size + (adm.gather ? 1 : 0)} gathered stage weights) ` +
+        `over cap ${state.cfg.cap} — free activations first (run a backward)` };
+    }
+  } else if (op.kind === 'F' && state.cfg.cap != null &&
       state.inflight[op.rank] >= state.cfg.cap) {
     return { code: 'memory', msg:
       `memory cap: rank ${op.rank} already holds ${state.inflight[op.rank]} ` +
@@ -183,6 +224,17 @@ export function apply(state, action) {
       e.reason = block;
       throw e;
     }
+    // FSDP residency: gather this stage's weights if absent (an allgather),
+    // resharding others first if the cap demands it
+    if (state.cfg.fsdp) {
+      const adm = fsdpAdmit(state, op, op.kind === 'F' ? 1 : 0);
+      if (adm.evict) state.resident[r] = new Set([...state.resident[r]].filter(s => s === op.stage));
+      if (adm.gather) {
+        state.resident[r].add(op.stage);
+        state.agCount[r]++;
+        state.agEvents.push({ rank: r, stage: op.stage, t });
+      }
+    }
     state.placed.set(op.id, { start: t, end: t + op.dur });
     state.rows[r].push({ id: op.id, start: t, dur: op.dur });
     state.frontier[r] = t + op.dur;
@@ -200,6 +252,9 @@ export function apply(state, action) {
       if (state.firstB[r] === null) state.firstB[r] = t;
     } else if (op.kind === 'W') {
       state.inflight[r]--;
+    }
+    if (state.cfg.fsdp) {
+      state.peak[r] = Math.max(state.peak[r], state.inflight[r] + residentWeight(state, r));
     }
   }
   state.actions.push(action);
@@ -235,6 +290,10 @@ export const POLICIES = {
   '1f1b-eager': { name: 'Backward-first, eager warmup', order: KIND_ORDER['1f1b'] },
   'zb':    { name: 'B > F > W (zero-bubble)', order: KIND_ORDER['zb'], quota: true },
   'zb-eager': { name: 'B > F > W, eager warmup', order: KIND_ORDER['zb'] },
+  // BF-PP: microbatches advance in GROUPS (scheduling units); within a group,
+  // all forwards breadth-first, then all backwards — so each stage's gathered
+  // weights get reused across the whole group before resharding.
+  'bfpp':  { name: 'Breadth-first groups (BF-PP)', order: { F: 0, B: 0, W: 0 }, grouped: true },
 };
 
 // Non-eager warmup: max in-flight forwards a rank keeps under 1F1B-style
@@ -291,8 +350,15 @@ export function rankCandidates(state, rank, policyKey, relaxQuota = false) {
   const P = state.cfg.P;
   const S = numStages(state.cfg);
   // forwards climb stages 0..S-1; backwards descend S-1..0
-  const G = roundSize(state.cfg);   // balanced rounds when P doesn't divide M
-  const key = placement(state.cfg) === 'v'
+  const G = state.cfg.group ?? roundSize(state.cfg);   // scheduling-unit size
+  const key = pol.grouped
+    // BF-PP: group-major, forwards-of-the-group before backwards, then stream
+    ? o => {
+        const st = o.kind === 'F' ? o.stage : S - 1 - o.stage;
+        const kindClass = o.kind === 'F' ? 0 : 1;
+        return (((Math.floor(o.mb / G) * 2 + kindClass) * S + st) * G + (o.mb % G));
+      }
+    : placement(state.cfg) === 'v'
     ? o => o.mb * S + (o.kind === 'F' ? o.stage : S - 1 - o.stage)
     : o => {
         const st = o.kind === 'F' ? o.stage : S - 1 - o.stage;
@@ -442,21 +508,37 @@ export function planViolations(cfg, plan) {
       }
     }
   }
-  // memory cap: walk each rank's timeline in order, F +1 / (B or W) release
+  // memory cap: walk each rank's timeline in order, F +1 / (B or W) release.
+  // Under FSDP, stage weights join the bill: gather on first use, keep for
+  // reuse, reshard others under pressure (same greedy rule as apply()).
   if (cfg.cap != null && !out.some(v => v.code === 'overlap')) {
     const release = splitGrad(cfg.model) ? 'W' : 'B';
+    const w = cfg.fsdp ?? 0;
     for (let r = 0; r < cfg.P; r++) {
       let held = 0;
+      const resident = new Set();
       const items = [...plan.entries()]
         .map(([id, start]) => ({ op: state.byId.get(id), start }))
         .filter(x => x.op.rank === r)
         .sort((a, b) => a.start - b.start);
       for (const { op, start } of items) {
-        if (op.kind === 'F') {
-          held++;
-          if (held > cfg.cap) out.push({ id: op.id, code: 'memory',
-            msg: `${label(op)} at t=${start} exceeds the memory cap (${held} > ${cfg.cap} in flight)` });
-        } else if (op.kind === release) held--;
+        const acts = held + (op.kind === 'F' ? 1 : 0);
+        if (w) {
+          resident.add(op.stage);
+          if (acts + w * resident.size > cfg.cap && resident.size > 1) {
+            resident.clear(); resident.add(op.stage);   // reshard the rest
+          }
+          if (acts + w * resident.size > cfg.cap) {
+            out.push({ id: op.id, code: 'memory',
+              msg: `${label(op)} at t=${start} OOMs: ${acts} activations + ` +
+                `${w}×${resident.size} gathered weights > cap ${cfg.cap}` });
+          }
+        } else if (op.kind === 'F' && acts > cfg.cap) {
+          out.push({ id: op.id, code: 'memory',
+            msg: `${label(op)} at t=${start} exceeds the memory cap (${acts} > ${cfg.cap} in flight)` });
+        }
+        if (op.kind === 'F') held++;
+        else if (op.kind === release) held--;
       }
     }
   }
@@ -792,11 +874,13 @@ export function score(state) {
     internalIdle += (last - first) - busy;
   }
   const internalBubble = span ? internalIdle / span : 0;
-  return { makespan, work, bubble, internalBubble, peak: [...state.peak] };
+  return { makespan, work, bubble, internalBubble, peak: [...state.peak],
+    agTotal: state.agCount.reduce((a, b) => a + b, 0) };
 }
 
 // Reference schedule for a config: projection under its natural policy.
 export function referencePolicy(cfg) {
+  if (cfg.fsdp) return 'bfpp';
   if (splitGrad(cfg.model)) return 'zb';
   return cfg.cap == null ? 'gpipe' : '1f1b';
 }
@@ -1086,6 +1170,9 @@ export function recognizeSchedule(state) {
       candidates.push({ name, note, state: s, paper });
     } catch { /* candidate not constructible for this cfg */ }
   };
+  if (cfg.fsdp) {
+    push('Breadth-First PP', 'grouped scheduling units so gathered weights are reused across the group (Lamy-Poirier 2023; ZeroPP 2024)', 'bfpp', null, 'bfpp');
+  }
   if (!zb) {
     push('GPipe', 'all forwards, then all backwards (Huang et al. 2019)', 'gpipe', null, 'gpipe');
     const vppName = placement(cfg) === 'v'

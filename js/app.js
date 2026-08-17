@@ -92,7 +92,10 @@ function readCustomCfg() {
   const cap = capRaw === '' ? null : Math.max(1, +capRaw);
   const warmup = $('cfgWarmup').checked ? 'zb2' : undefined;
   const place = $('cfgPlace').value || undefined;
-  return { P, V, M, model, cap, ...(warmup ? { warmup } : {}), ...(place ? { place } : {}) };
+  const fsdp = +$('cfgFsdp').value || undefined;
+  const group = +$('cfgGroup').value || undefined;
+  return { P, V, M, model, cap, ...(warmup ? { warmup } : {}), ...(place ? { place } : {}),
+           ...(fsdp ? { fsdp } : {}), ...(group ? { group } : {}) };
 }
 
 function loadLevel(level, actions = []) {
@@ -139,6 +142,8 @@ function goalText(level) {
     case 'par': return `Goal: complete it in makespan ≤ ${ref.score.makespan} (par${parName}).`;
     case 'internal0': return `Goal: complete it with 0% internal bubble ` +
       `(no rank idles between its first and last op). Par makespan is ${ref.score.makespan}${parName}.`;
+    case 'ag': return `Goal: complete it with ≤ ${ref.score.agTotal} allgathers ` +
+      `(par${parName}; par makespan ${ref.score.makespan}).`;
   }
 }
 
@@ -147,6 +152,7 @@ function goalMet(s) {
     case 'complete': return true;
     case 'par': return s.makespan <= state.ref.score.makespan;
     case 'internal0': return s.internalBubble < 1e-9;
+    case 'ag': return s.agTotal <= state.ref.score.agTotal;
   }
 }
 
@@ -718,17 +724,63 @@ function renderMemStrip(sim, r, horizon) {
     else if (E.splitGrad(cfg.model) ? op.kind === 'W' : op.kind === 'B')
       delta[it.start + it.dur - 1]--;
   }
-  const cap = cfg.cap ?? cfg.M * cfg.V;
+  // FSDP: weight residency per slot + gather ticks (replay the greedy
+  // gather/reshard walk over this rank's ops, same rule as the engine)
+  const w = cfg.fsdp ?? 0;
+  const wUnits = new Array(horizon).fill(0);
+  const gathers = [];
+  if (w) {
+    let held = 0;
+    const resident = new Set();
+    const items = sim.rows[r].filter(it => it.id)
+      .map(it => ({ op: sim.byId.get(it.id), start: it.start, dur: it.dur }))
+      .sort((a, b) => a.start - b.start);
+    let prevEnd = 0;
+    for (const { op, start, dur } of items) {
+      const acts = held + (op.kind === 'F' ? 1 : 0);
+      if (!resident.has(op.stage)) {
+        if (cfg.cap != null && acts + w * (resident.size + 1) > cfg.cap) resident.clear();
+        resident.add(op.stage);
+        gathers.push({ t: start, stage: op.stage });
+      }
+      for (let t = prevEnd; t < Math.min(start + dur, horizon); t++) wUnits[t] = w * resident.size;
+      prevEnd = start + dur;
+      if (op.kind === 'F') held++;
+      else if (E.splitGrad(cfg.model) ? op.kind === 'W' : op.kind === 'B') held--;
+    }
+    for (let t = prevEnd; t < Math.min(sim.frontier[r], horizon); t++) wUnits[t] = w * resident.size;
+  }
+  const cap = cfg.cap ?? cfg.M * cfg.V + w * E.rankStages(cfg, r).length;
   let cur = 0;
   const t99 = sim.frontier[r];
   for (let t = 0; t < Math.min(horizon, t99); t++) {
     cur += delta[t];
+    const total = cur + wUnits[t];
+    if (wUnits[t]) {
+      const wbar = document.createElement('div');
+      wbar.className = 'membar weights';
+      wbar.style.left = (t * CELL) + 'px';
+      wbar.style.height = Math.max(1, Math.round(12 * wUnits[t] / cap)) + 'px';
+      wbar.title = `t=${t}: ${wUnits[t]} units of gathered weights`;
+      lane.appendChild(wbar);
+    }
     const bar = document.createElement('div');
-    bar.className = 'membar' + (cfg.cap != null && cur >= cfg.cap ? ' atcap' : '');
+    bar.className = 'membar' + (cfg.cap != null && total >= cfg.cap ? ' atcap' : '');
     bar.style.left = (t * CELL) + 'px';
+    bar.style.bottom = Math.round(12 * wUnits[t] / cap) + 'px';
     bar.style.height = Math.max(1, Math.round(12 * cur / cap)) + 'px';
-    bar.title = `t=${t}: ${cur} in flight${cfg.cap != null ? ` (cap ${cfg.cap})` : ''}`;
+    bar.title = `t=${t}: ${cur} activations` + (w ? ` + ${wUnits[t]} weights = ${total}` : '') +
+      (cfg.cap != null ? ` (cap ${cfg.cap})` : '');
     lane.appendChild(bar);
+  }
+  for (const g of gathers) {
+    if (g.t >= horizon) continue;
+    const tick = document.createElement('div');
+    tick.className = 'agtick';
+    tick.style.left = (g.t * CELL) + 'px';
+    tick.textContent = '⇅';
+    tick.title = `allgather: stage ${g.stage} weights (t=${g.t})`;
+    lane.appendChild(tick);
   }
   strip.appendChild(lane);
   return strip;
@@ -1433,6 +1485,9 @@ function renderStats() {
       <tr><td>par bubble</td><td>${pct(state.ref.score.bubble)}</td></tr>
       <tr><td title="idle between each rank's own first and last op — ignores the unavoidable fill/drain stagger">internal bubble</td>
           <td>${pct(s.internalBubble)} <span style="color:var(--muted)">(par ${pct(state.ref.score.internalBubble)})</span></td></tr>
+      ${sim.cfg.fsdp ? `<tr><td title="FSDP/ZeRO-3 weight allgathers inferred from your schedule — each is exposed communication">allgathers</td>
+        <td class="${done ? (s.agTotal <= state.ref.score.agTotal ? 'beat' : 'miss') : ''}">${s.agTotal}
+        <span style="color:var(--muted)">(par ${state.ref.score.agTotal})</span></td></tr>` : ''}
       ${(() => {
         const sol = store.solution(state.level.key);
         return sol ? `<tr><td>your best</td><td>${sol.makespan}</td></tr>` : '';
@@ -1494,7 +1549,9 @@ function renderChrome() {
     $('cfgCap').value = c.cap ?? '';
     $('cfgWarmup').checked = c.warmup === 'zb2';
     $('cfgPlace').value = c.place ?? '';
-    for (const id of ['cfgP', 'cfgV', 'cfgM', 'cfgModel', 'cfgCap', 'cfgWarmup', 'cfgPlace'])
+    $('cfgFsdp').value = c.fsdp ?? 0;
+    $('cfgGroup').value = c.group ?? '';
+    for (const id of ['cfgP', 'cfgV', 'cfgM', 'cfgModel', 'cfgCap', 'cfgWarmup', 'cfgPlace', 'cfgFsdp', 'cfgGroup'])
       $(id).disabled = !custom;
     $('cfgapply').style.display = custom ? '' : 'none';
     $('cfgfork').style.display = custom ? 'none' : '';
@@ -1583,7 +1640,7 @@ function showBanner(won, s) {
     ? ` You built <b>${rec.name}</b> — ${rec.note}.${cite}`
     : ` This op ordering doesn't match any schedule in our library — it's yours. 🧪`;
   let msg;
-  if (won && s.makespan < parM) {
+  if (won && s.makespan < parM && state.level.goal !== 'ag') {
     const canon = E.recognizeSchedule(state.ref.state);
     const parName = canon?.name ?? 'the reference schedule';
     msg = `🏆 <b>You BEAT par!</b> Makespan ${s.makespan} vs ${parM} — you out-scheduled ` +
@@ -1592,10 +1649,15 @@ function showBanner(won, s) {
   } else if (won) {
     msg = `🎉 <b>Level cleared!</b> Makespan ${s.makespan}` +
       (state.level.goal === 'internal0' ? `, internal bubble ${pct(s.internalBubble)}` :
+       state.level.goal === 'ag' ? `, ${s.agTotal} allgathers` +
+         (s.agTotal < state.ref.score.agTotal ? ` — FEWER than par's ${state.ref.score.agTotal}! 🏆` : '') :
        s.makespan <= parM ? ` — matched par` : '') + '.' + recMsg;
   } else if (state.level.goal === 'internal0') {
     msg = `✅ Complete, but internal bubble is ${pct(s.internalBubble)} — the goal is 0%. ` +
       `Find the gaps (hatched slots between a rank's first and last op) and fill them with W ops.`;
+  } else if (state.level.goal === 'ag') {
+    msg = `✅ Complete, but ${s.agTotal} allgathers vs par's ${state.ref.score.agTotal} — ` +
+      `every stage switch regathers. Group microbatches so each gather gets reused.`;
   } else {
     msg = `✅ Complete, but makespan ${s.makespan} vs par ${parM} — ` +
       `${s.makespan - parM} slot(s) of avoidable bubble to squeeze out.`;
@@ -1754,7 +1816,8 @@ function saveHash() {
   let h = `level=${state.level.key}`;
   if (state.level.key === 'custom') {
     const c = state.level.cfg;
-    h += `&cfg=${c.P}.${c.V}.${c.M}.${c.model}.${c.cap ?? 'x'}.${c.warmup ?? 'std'}.${c.place ?? 'auto'}`;
+    h += `&cfg=${c.P}.${c.V}.${c.M}.${c.model}.${c.cap ?? 'x'}.${c.warmup ?? 'std'}.${c.place ?? 'auto'}` +
+         `.${c.fsdp ?? 0}.${c.group ?? 0}`;
   }
   if (acts) h += '&a=' + acts;
   history.replaceState(null, '', '#' + h);
@@ -1764,11 +1827,13 @@ function loadHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   let level;
   if (p.get('level') === 'custom' && p.get('cfg')) {
-    const [P, V, M, model, cap, warmup, place] = p.get('cfg').split('.');
+    const [P, V, M, model, cap, warmup, place, fsdp, group] = p.get('cfg').split('.');
     level = customLevel({ P: +P, V: +V, M: +M, model,
       cap: cap === 'x' ? null : +cap,
       ...(warmup === 'zb2' ? { warmup: 'zb2' } : {}),
-      ...(place && place !== 'auto' ? { place } : {}) });
+      ...(place && place !== 'auto' ? { place } : {}),
+      ...(+fsdp ? { fsdp: +fsdp } : {}),
+      ...(+group ? { group: +group } : {}) });
   } else {
     level = levelByKey(p.get('level') || LEVELS[0].key);
   }
@@ -1792,7 +1857,7 @@ function init() {
   };
   $('cfgapply').onclick = () => loadLevel(customLevel(readCustomCfg()));
   $('cfgfork').onclick = () => {
-    for (const id of ['cfgP', 'cfgV', 'cfgM', 'cfgModel', 'cfgCap', 'cfgWarmup', 'cfgPlace'])
+    for (const id of ['cfgP', 'cfgV', 'cfgM', 'cfgModel', 'cfgCap', 'cfgWarmup', 'cfgPlace', 'cfgFsdp', 'cfgGroup'])
       $(id).disabled = false;
     loadLevel(customLevel({ ...state.level.cfg }));
   };

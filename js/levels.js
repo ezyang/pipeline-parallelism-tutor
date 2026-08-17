@@ -7,6 +7,8 @@ export const PAPERS = {
   zb: { label: 'Zero Bubble Pipeline Parallelism (Qi et al. 2023)', url: 'https://arxiv.org/abs/2401.10241' },
   controllable: { label: 'Controllable Memory / building blocks & ZB-V (Qi et al. 2024)', url: 'https://arxiv.org/abs/2405.15362' },
   dualpipe: { label: 'DualPipe (DeepSeek-V3, 2024)', url: 'https://arxiv.org/abs/2412.19437' },
+  bfpp: { label: 'Breadth-First Pipeline Parallelism (Lamy-Poirier 2023)', url: 'https://arxiv.org/abs/2211.05953' },
+  zeropp: { label: 'ZeroPP (Tang et al. 2024)', url: 'https://arxiv.org/abs/2402.03791' },
 };
 
 // Level progression. Each level fixes a config and a coaching policy; its
@@ -180,6 +182,26 @@ rank ever gaps between its first and last op. Target: internal bubble 0% —
 the schedule is a parallelogram, and every remaining idle slot is just the
 unavoidable fill/drain stagger. Peak memory hits ~2P on rank 0: you are
 literally trading memory for bubble, and here you can see the exchange rate.`,
+  },
+  {
+    key: 'fsdp',
+    name: '11. FSDP × PP: weights as a cache',
+    cfg: { P: 2, V: 2, M: 8, model: '11', cap: 14, place: 'wrap', fsdp: 6, group: 4 },
+    policy: 'bfpp',
+    goal: 'ag',
+    papers: ['bfpp', 'zeropp'],
+    blurb: `New rule: weights are ZeRO-3 sharded. Before a rank can run any op
+of a stage, that stage's weights (6 memory units) must be ALLGATHERED — and
+they count against the cap alongside activations. Gathered weights STAY
+resident for reuse, resharding only under memory pressure; you never place
+an allgather — watch the ⇅ ticks and the weight layer in the memory bars.
+Each AG is exposed communication: too many and you're comms-bound. The
+dilemma: run all 8 microbatches against gathered weights (max reuse) and
+activations blow the cap — OOM. Alternate stages every microbatch and you
+ping-pong gathers (~27 AGs). The fix is BF-PP / ZeroPP's scheduling units:
+groups of 4 microbatches, forwards breadth-first then backwards, reusing
+each gather across the group — 10 AGs, at the price of a little bubble.
+Comm ↔ activation memory ↔ bubble: pick two.`,
   },
 ];
 

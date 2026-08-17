@@ -135,6 +135,11 @@ main > div { min-width: 0; }
   background: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .membar.atcap { background: color-mix(in srgb, var(--bad) 70%, transparent); }
+.membar.weights { background: color-mix(in srgb, #c98500 40%, transparent); }
+.agtick {
+  position: absolute; bottom: 0; font-size: 9px; line-height: 1;
+  color: #c98500; font-weight: 700; pointer-events: auto; z-index: 2;
+}
 .op.dep-up { outline: 2.5px solid var(--bad); outline-offset: 1px; z-index: 5; }
 .op.dep-down { outline: 2.5px solid var(--good); outline-offset: 1px; z-index: 5; }
 .op.ghost { opacity: 0.5; border-style: dashed; box-shadow: none; z-index: 6;
